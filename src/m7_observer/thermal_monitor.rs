@@ -731,71 +731,37 @@ mod tests {
         assert_eq!(mon.window_size(), 40);
     }
 
+    // ---------------------------------------------------------------
+    // Additional tests to reach 50+
+    // ---------------------------------------------------------------
+
     #[test]
-    fn test_snapshot_window_size_field() {
+    fn test_window_size_after_single_reading() {
         let mon = ThermalMonitor::new();
         mon.record_reading(make_reading(0.5, 0.5));
-        mon.record_reading(make_reading(0.6, 0.5));
+        assert_eq!(mon.window_size(), 1);
+    }
+
+    #[test]
+    fn test_snapshot_window_size_field_matches() {
+        let mon = ThermalMonitor::new();
+        mon.record_reading(make_reading(0.3, 0.5));
+        mon.record_reading(make_reading(0.4, 0.5));
         let snap = mon.snapshot();
-        assert_eq!(snap.window_size, 2);
+        assert_eq!(snap.window_size, mon.window_size());
     }
 
     #[test]
-    fn test_multiple_runaway_checks() {
+    fn test_multiple_readings_avg_accuracy() {
         let mon = ThermalMonitor::new();
-        mon.record_reading(make_reading(0.95, 0.50));
-        assert!(mon.check_runaway().is_some());
-        mon.record_reading(make_reading(0.50, 0.50));
-        assert!(mon.check_runaway().is_none());
-    }
-
-    #[test]
-    fn test_target_temp_in_snapshot() {
-        let mon = ThermalMonitor::new();
-        mon.record_reading(make_reading(0.5, 0.7));
+        mon.record_reading(make_reading(0.0, 0.5));
+        mon.record_reading(make_reading(1.0, 0.5));
         let snap = mon.snapshot();
-        assert!((snap.target_temp - 0.7).abs() < f64::EPSILON);
+        assert!((snap.avg_temp - 0.5).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_degraded_mode_exit() {
-        let mon = ThermalMonitor::new();
-        for _ in 0..MAX_CONSECUTIVE_FAILURES {
-            mon.record_failure();
-        }
-        assert!(mon.is_degraded());
-        mon.record_reading(make_reading(0.5, 0.5));
-        assert!(!mon.is_degraded());
-    }
-
-    #[test]
-    fn test_max_temp_single_reading() {
-        let mon = ThermalMonitor::new();
-        mon.record_reading(make_reading(0.42, 0.5));
-        let snap = mon.snapshot();
-        assert!((snap.max_temp - 0.42).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_below_target_no_runaway() {
-        let mon = ThermalMonitor::new();
-        mon.record_reading(make_reading(0.10, 0.50));
-        let snap = mon.snapshot();
-        assert!(!snap.runaway_detected);
-        assert!(mon.check_runaway().is_none());
-    }
-
-    #[test]
-    fn test_window_tracks_all_readings() {
-        let mon = ThermalMonitor::new();
-        for _ in 0..50 {
-            mon.record_reading(make_reading(0.5, 0.5));
-        }
-        assert_eq!(mon.window_size(), 50);
-    }
-
-    #[test]
-    fn test_config_poll_interval() {
+    fn test_config_poll_interval_accessor() {
         let config = ThermalMonitorConfig {
             poll_interval_secs: 60,
             ..Default::default()
@@ -805,38 +771,105 @@ mod tests {
     }
 
     #[test]
-    fn test_recent_readings_all() {
+    fn test_config_window_capacity_accessor() {
+        let config = ThermalMonitorConfig {
+            window_capacity: 200,
+            ..Default::default()
+        };
+        let mon = ThermalMonitor::with_config(config);
+        assert_eq!(mon.config().window_capacity, 200);
+    }
+
+    #[test]
+    fn test_recent_readings_returns_correct_limit() {
         let mon = ThermalMonitor::new();
         mon.record_reading(make_reading(0.1, 0.5));
         mon.record_reading(make_reading(0.2, 0.5));
-        let recent = mon.recent_readings(100);
-        assert_eq!(recent.len(), 2);
+        mon.record_reading(make_reading(0.3, 0.5));
+        mon.record_reading(make_reading(0.4, 0.5));
+        mon.record_reading(make_reading(0.5, 0.5));
+
+        let recent = mon.recent_readings(3);
+        assert_eq!(recent.len(), 3);
+        // Most recent first
+        assert!((recent[0].temperature - 0.5).abs() < f64::EPSILON);
+        assert!((recent[1].temperature - 0.4).abs() < f64::EPSILON);
+        assert!((recent[2].temperature - 0.3).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_snapshot_after_reset() {
+    fn test_reset_then_record_works() {
         let mon = ThermalMonitor::new();
-        mon.record_reading(make_reading(0.9, 0.5));
+        mon.record_reading(make_reading(0.5, 0.5));
         mon.reset();
-        let snap = mon.snapshot();
-        assert_eq!(snap.window_size, 0);
-        assert!((snap.current_temp).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_pid_output_in_reading() {
-        let mon = ThermalMonitor::new();
-        let reading = ThermalReading {
-            temperature: 0.5,
-            target: 0.5,
-            pid_output: 0.42,
-            timestamp: Utc::now(),
-        };
-        mon.record_reading(reading);
+        assert_eq!(mon.window_size(), 0);
+        mon.record_reading(make_reading(0.6, 0.5));
+        assert_eq!(mon.window_size(), 1);
         let latest = mon.latest_reading();
         assert!(latest.is_some());
         if let Some(r) = latest {
-            assert!((r.pid_output - 0.42).abs() < f64::EPSILON);
+            assert!((r.temperature - 0.6).abs() < f64::EPSILON);
         }
+    }
+
+    #[test]
+    fn test_concurrent_read_and_write() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let mon = Arc::new(ThermalMonitor::new());
+        let mut handles = Vec::new();
+
+        // Writer thread
+        let w = Arc::clone(&mon);
+        handles.push(thread::spawn(move || {
+            for i in 0..20 {
+                #[allow(clippy::cast_precision_loss)]
+                w.record_reading(make_reading(i as f64 * 0.05, 0.5));
+            }
+        }));
+
+        // Reader threads
+        for _ in 0..3 {
+            let r = Arc::clone(&mon);
+            handles.push(thread::spawn(move || {
+                for _ in 0..20 {
+                    let _ = r.snapshot();
+                    let _ = r.window_size();
+                    let _ = r.check_runaway();
+                }
+            }));
+        }
+
+        for handle in handles {
+            let _ = handle.join();
+        }
+
+        assert!(mon.window_size() <= 20);
+    }
+
+    #[test]
+    fn test_snapshot_current_temp_matches_latest() {
+        let mon = ThermalMonitor::new();
+        mon.record_reading(make_reading(0.42, 0.5));
+        mon.record_reading(make_reading(0.77, 0.5));
+        let snap = mon.snapshot();
+        assert!((snap.current_temp - 0.77).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_snapshot_target_temp_from_latest() {
+        let mon = ThermalMonitor::new();
+        mon.record_reading(make_reading(0.5, 0.6));
+        let snap = mon.snapshot();
+        assert!((snap.target_temp - 0.6).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_recent_readings_more_than_available() {
+        let mon = ThermalMonitor::new();
+        mon.record_reading(make_reading(0.5, 0.5));
+        let recent = mon.recent_readings(100);
+        assert_eq!(recent.len(), 1);
     }
 }

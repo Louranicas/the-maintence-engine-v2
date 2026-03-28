@@ -1127,4 +1127,20 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("ghost") || msg.contains("not found"));
     }
+
+    // ---------------------------------------------------------------
+    // Additional test to reach 50+
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_with_max_history_custom_value() {
+        let m = HealthMonitor::with_max_history(5);
+        let _ = m.register_probe(make_probe("svc"));
+        // Record 10 results, only 5 should be retained
+        for _ in 0..10 {
+            let _ = m.record_result("svc", HealthCheckResult::success("svc", 1));
+        }
+        let history = m.get_history("svc").unwrap_or_default();
+        assert_eq!(history.len(), 5);
+    }
 }
