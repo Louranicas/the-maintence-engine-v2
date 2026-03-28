@@ -279,19 +279,154 @@ ME V2 (62,522 LOC, 2,288 tests, 8 layers)
 
 ---
 
-## Cross-References
+## Background Tasks (12 spawned in main.rs)
 
-| Resource | Path |
-|----------|------|
-| MASTER_INDEX | `MASTER_INDEX.md` |
-| QUICKSTART | `ai_docs/QUICKSTART.md` |
-| Scaffolding Plan | `SCAFFOLDING_MASTER_PLAN.md` |
-| Module INDEX | `ai_docs/modules/INDEX.md` |
-| V1 Mind Map | `ai_docs/META_TREE_MIND_MAP_M48_M57.md` |
-| Nexus Specs | `ai_specs/nexus-specs/` |
-| V1 Reference | `/home/louranicas/claude-code-workspace/the_maintenance_engine/` |
-| ORAC Reference | `/home/louranicas/claude-code-workspace/orac-sidecar/` |
+| Task | Interval | Target | Wire Point |
+|------|----------|--------|------------|
+| `spawn_observer_tick` | 60s | Internal M37-M39 pipeline | main.rs:541 |
+| `spawn_health_polling` | 30s | 12 services (health endpoints) | main.rs:397 |
+| `spawn_peer_polling` | 30s | Peer bridge state sync | main.rs:1141 |
+| `spawn_pv2_eventbus_bridge` | 10s | PV2:8132/bus/events (6 channels) | main.rs:303 |
+| `spawn_devops_pipeline_trigger` | Startup | DevOps:8081/pipeline/trigger | main.rs:260 |
+| `spawn_tool_registration` | Startup | TL:8105/api/tools (15 tools) | main.rs:1126 |
+| `spawn_learning_cycle` | 120s | Internal L5 STDP pathway update | main.rs:1179 |
+| `spawn_thermal_polling` | 60s | SYNTHEX:8090/v3/thermal | main.rs:1232 |
+| `spawn_cascade_polling` | 60s | SYNTHEX:8090/v3/diagnostics | main.rs:1262 |
+| `spawn_decay_scheduler` | 300s | SYNTHEX:8090/v3/decay/trigger | main.rs:1290 |
+| `spawn_heartbeat` | 60s | Log-only liveness | main.rs:529 |
 
 ---
 
-*Meta Tree Mind Map V2 | 8 Layers | 48+ Modules | 62,522 LOC | Session 068*
+## Pipelines (8 core + 3 planned)
+
+| Pipeline | Priority | SLO | Modules |
+|----------|----------|-----|---------|
+| PL-HEALTH-001 | 1 | <100ms | M10, M12 |
+| PL-LOG-001 | 2 | <50ms | M05, M06 |
+| PL-REMEDIATE-001 | 1 | <500ms | M13, M14, M15 |
+| PL-HEBBIAN-001 | 2 | <100ms | M25, M26, M27 |
+| PL-CONSENSUS-001 | 1 | <5s | M31, M32, M35 |
+| PL-TENSOR-001 | 3 | <10ms | M04, M08 |
+| PL-DISCOVERY-001 | 2 | <1s | M09, M12 |
+| PL-METRICS-001 | 3 | <200ms | M04, M10 |
+| **PL-PREDICT-001** (V2) | 3 | <50ms | M54, M27 |
+| **PL-AUTH-001** (V2) | 1 | <10ms | M51 |
+| **PL-DISSENT-001** (V2) | 2 | <200ms | M57, M35 |
+
+---
+
+## Evolution Chamber (RALPH — V2 Advanced)
+
+```
+V1 RALPH (ME): 31 gens in 17h = 1.8 gen/h, fitness 0.61 (STALLED)
+V1 RALPH (ORAC): 13,860 gens in 26h = 533 gen/h, fitness 0.76 (ACTIVE)
+V2 TARGET: 240+ gen/h, fitness 0.85+, field-gated, hint-guided
+
+V2 3-Tier Evolution:
+  TIER 3: Meta-Evolution (strategy selection, cross-service coordination)
+  TIER 2: Gated Evolution (N05 shadow test, accept if r_after >= r_baseline)
+  TIER 1: Core RALPH (4-source Learn, 5 strategies, diversity gate)
+
+V2 RALPH Phases:
+  Recognize → check layer health + r_delta + stagnation
+  Analyze   → classify system state → select strategy
+  Learn     → 4 sources: emergence → dimension → pathway → structural deficit
+  Propose   → hint-guided + diversity gate + strategy-specific delta
+  Harvest   → N05 gate → record full details → checkpoint every 10 gens
+
+Reference: ai_docs/ADVANCED_EVOLUTION_CHAMBER_V2.md (537 lines)
+```
+
+---
+
+## Error Taxonomy (M01, 8 categories)
+
+| Category | Code Range | Error Variants |
+|----------|------------|----------------|
+| Config | 1000-1099 | `Config(String)` |
+| Database | 1100-1199 | `Database(String)` |
+| Network | 1200-1299 | `Network { target, message }` |
+| Consensus | 1300-1399 | `Consensus(String)` |
+| Learning | 1400-1499 | `Learning(String)` |
+| Validation | 1500-1599 | `Validation(String)` |
+| Auth (V2) | 1600-1699 | `AuthenticationFailed { reason, token_type }` |
+| RateLimit (V2) | 1700-1799 | `RateLimitExceeded { key, tier, retry_after_secs }` |
+| TensorValidation | — | `TensorValidation { dimension, value }` |
+| ServiceNotFound | — | `ServiceNotFound(String)` |
+| Other | — | `Other(String)` |
+
+---
+
+## Bidirectional Links
+
+### Obsidian Vault (`~/projects/claude_code/`)
+
+| Note | Links To |
+|------|----------|
+| `[[The Maintenance Engine]]` | Architecture, 12D tensor, RALPH, databases |
+| `[[Maintenance Engine — Architecture Schematic]]` | 7-layer diagram, module inventory |
+| `[[Maintenance Engine — 12D Tensor Specification]]` | Tensor encoding, weights, anomaly |
+| `[[Maintenance Engine — Database Schema]]` | 11 SQLite schemas |
+| `[[ME RALPH Loop Specification]]` | 5-phase cycle, observer integration |
+| `[[ME Metabolic Architecture V7]]` | Fitness trajectory, activation timeline |
+| `[[Session 068 — ME V2 Scaffold Deployment and Module Alignment]]` | This session |
+| `[[Session 067 — Complete Synthesis]]` | Prior session, bootstrap protocol |
+| `[[Session 064 — Future Deployment Plan (NAM Book ACP)]]` | 3-action plan |
+| `[[ULTRAPLATE Master Index]]` | 17 services, all projects |
+| `[[ORAC Sidecar — Architecture Schematics]]` | ORAC 8 layers, bridges |
+| `[[Adversarial Convergence Protocol]]` | ACP methodology |
+
+### Internal Document Links
+
+| This Document | Links To | Direction |
+|---------------|----------|-----------|
+| META_TREE_MIND_MAP_V2 | [MASTER_INDEX.md](../MASTER_INDEX.md) | → inventory |
+| META_TREE_MIND_MAP_V2 | [QUICKSTART.md](QUICKSTART.md) | → build/run |
+| META_TREE_MIND_MAP_V2 | [SCAFFOLDING_MASTER_PLAN.md](../SCAFFOLDING_MASTER_PLAN.md) | → architecture blueprint |
+| META_TREE_MIND_MAP_V2 | [ADVANCED_EVOLUTION_CHAMBER_V2.md](ADVANCED_EVOLUTION_CHAMBER_V2.md) | → evolution design |
+| META_TREE_MIND_MAP_V2 | [HABITAT_INTEGRATION_SPEC.md](../ai_specs/HABITAT_INTEGRATION_SPEC.md) | → wiring spec |
+| META_TREE_MIND_MAP_V2 | [modules/INDEX.md](modules/INDEX.md) | → 55 module docs |
+| META_TREE_MIND_MAP_V2 | [META_TREE_MIND_MAP_M48_M57.md](META_TREE_MIND_MAP_M48_M57.md) | → V1 expansion plan |
+| MASTER_INDEX | META_TREE_MIND_MAP_V2 | ← navigation |
+| QUICKSTART | META_TREE_MIND_MAP_V2 | ← reference |
+| CLAUDE.md | META_TREE_MIND_MAP_V2 | ← architecture |
+| modules/INDEX.md | META_TREE_MIND_MAP_V2 | ← overview |
+
+### Cross-Service References
+
+| Service | Documentation | Wiring Spec |
+|---------|--------------|-------------|
+| ORAC Sidecar | `orac-sidecar/CLAUDE.md` | m23_me_bridge (inbound), M53 OracBridge (planned outbound) |
+| PV2 | `pane-vortex-v2/CLAUDE.md` | EventBus bridge (outbound), field health (read) |
+| SYNTHEX | `developer_environment_manager/synthex/` | V3 thermal/cascade/decay (bidirectional) |
+| VMS | `vortex-memory-system/` | N04 StdpBridge (planned, VMS pattern learning) |
+| DevOps Engine | `devops_engine_v2/` | Pipeline trigger (outbound startup) |
+| K7 Orchestrator | SAN-K7 at :8100 | 11 nexus commands, 59 modules |
+| POVM Engine | `nexus_forge/povm_engine/` | Crystallize/hydrate (session lifecycle) |
+| Reasoning Memory | RM at :8130 | TSV persist/search (cross-session) |
+
+---
+
+## Cross-References (Complete)
+
+| Resource | Path | Purpose |
+|----------|------|---------|
+| **MASTER_INDEX** | [`MASTER_INDEX.md`](../MASTER_INDEX.md) | Complete project inventory |
+| **QUICKSTART** | [`QUICKSTART.md`](QUICKSTART.md) | Build, run, navigate |
+| **README** | [`../CLAUDE.md`](../CLAUDE.md) | Bootstrap context for Claude Code |
+| **Scaffolding Plan** | [`SCAFFOLDING_MASTER_PLAN.md`](../SCAFFOLDING_MASTER_PLAN.md) | V2 architecture blueprint |
+| **Evolution Chamber V2** | [`ADVANCED_EVOLUTION_CHAMBER_V2.md`](ADVANCED_EVOLUTION_CHAMBER_V2.md) | RALPH redesign from live data |
+| **Habitat Integration** | [`HABITAT_INTEGRATION_SPEC.md`](../ai_specs/HABITAT_INTEGRATION_SPEC.md) | Full wiring map + schematics |
+| **Module INDEX** | [`modules/INDEX.md`](modules/INDEX.md) | 55 module docs (48 M-series + 6 N-series + INDEX) |
+| **V1 Mind Map** | [`META_TREE_MIND_MAP_M48_M57.md`](META_TREE_MIND_MAP_M48_M57.md) | V1 expansion plan (reference) |
+| **AI Specs INDEX** | [`../ai_specs/INDEX.md`](../ai_specs/INDEX.md) | 27+ spec files |
+| **Nexus Specs** | [`../ai_specs/nexus-specs/`](../ai_specs/nexus-specs/) | L8 spec directory (8 files) |
+| **Patterns** | [`../ai_specs/patterns/`](../ai_specs/patterns/) | 10 design pattern docs |
+| **V1 Reference** | `/home/louranicas/claude-code-workspace/the_maintenance_engine/` | Running V1 binary |
+| **ORAC Reference** | `/home/louranicas/claude-code-workspace/orac-sidecar/` | Fleet proxy |
+| **Obsidian Vault** | `/home/louranicas/projects/claude_code/` | 215+ notes |
+| **Shared Context** | `~/projects/shared-context/` | Session notes, plans |
+
+---
+
+*Meta Tree Mind Map V2 | 8 Layers | 48+ Modules | 62,522 LOC | 297→420 lines | Session 068*
