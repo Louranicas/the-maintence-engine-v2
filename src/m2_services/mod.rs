@@ -52,6 +52,7 @@ pub mod health_monitor;
 pub mod lifecycle;
 pub mod resilience;
 pub mod service_registry;
+pub mod traffic;
 
 use std::fmt;
 
@@ -80,6 +81,10 @@ pub use resilience::{
 };
 pub use service_registry::{
     ServiceDefinition, ServiceDefinitionBuilder, ServiceDiscovery, ServiceRegistry,
+};
+pub use traffic::{
+    RequestObservation, TrafficConfig, TrafficConfigBuilder, TrafficManager, TrafficShaping,
+    TrafficSnapshot,
 };
 
 // ============================================================================
