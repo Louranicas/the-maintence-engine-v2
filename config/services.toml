@@ -1,0 +1,647 @@
+# =============================================================================
+# The Maintenance Engine - ULTRAPLATE 12-Service Mesh Configuration
+# =============================================================================
+# Configuration for ULTRAPLATE 12-Service Architecture integration
+# Port: 8080 | 36 Modules | 6 Layers | 12D Tensor | PBFT n=40, f=13, q=27
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Service Discovery
+# -----------------------------------------------------------------------------
+[discovery]
+# Discovery method
+method = "static"                   # static, consul, kubernetes, dns
+refresh_interval_secs = 60          # How often to refresh service list
+
+# -----------------------------------------------------------------------------
+# The Maintenance Engine (Self)
+# -----------------------------------------------------------------------------
+[services.maintenance_engine]
+name = "The Maintenance Engine"
+id = "maintenance-engine"
+version = "1.0.0"
+port = 8080
+grpc_port = 8081
+websocket_port = 8082
+host = "localhost"
+
+# Endpoints
+health_endpoint = "/api/health"
+metrics_endpoint = "/metrics"
+api_prefix = "/api"
+
+# Capabilities
+capabilities = [
+    "service_monitoring",
+    "health_checking",
+    "log_processing",
+    "auto_remediation",
+    "hebbian_learning",
+    "pbft_consensus",
+    "tensor_encoding",
+    "service_discovery"
+]
+
+# NAM compliance
+[services.maintenance_engine.nam]
+target_compliance = 0.92
+human_agent_id = "@0.A"
+
+# -----------------------------------------------------------------------------
+# SYNTHEX Engine (Tier 1)
+# -----------------------------------------------------------------------------
+[services.synthex]
+name = "SYNTHEX Engine"
+id = "synthex"
+version = "1.0.0"
+host = "localhost"
+port = 8090
+websocket_port = 8091
+
+protocol = "http"
+health_endpoint = "/api/health"
+api_prefix = "/api"
+
+capabilities = [
+    "pattern_synthesis",
+    "code_generation",
+    "semantic_analysis"
+]
+
+# Priority and weight (from default.toml)
+tier = 1
+weight = 1.5
+priority = 1
+synergy_target = 0.950
+
+[services.synthex.circuit_breaker]
+enabled = true
+failure_threshold = 5
+timeout_secs = 30
+success_threshold = 3
+
+[services.synthex.retry]
+max_attempts = 3
+initial_delay_ms = 500
+max_delay_ms = 5000
+backoff_multiplier = 2.0
+
+[services.synthex.health]
+interval_secs = 30
+timeout_ms = 10000
+unhealthy_threshold = 3
+
+# -----------------------------------------------------------------------------
+# SAN-K7 Orchestrator (Tier 1)
+# -----------------------------------------------------------------------------
+[services.sank7]
+name = "SAN-K7 Orchestrator"
+id = "san-k7"
+version = "1.55.0"
+host = "localhost"
+port = 8100
+
+protocol = "http"
+health_endpoint = "/health"
+api_prefix = "/api"
+
+capabilities = [
+    "module_orchestration",
+    "workflow_management",
+    "task_scheduling"
+]
+
+tier = 1
+weight = 1.5
+priority = 1
+synergy_target = 0.992
+
+[services.sank7.circuit_breaker]
+enabled = true
+failure_threshold = 5
+timeout_secs = 30
+success_threshold = 3
+
+[services.sank7.retry]
+max_attempts = 3
+initial_delay_ms = 500
+max_delay_ms = 5000
+backoff_multiplier = 2.0
+
+[services.sank7.health]
+interval_secs = 30
+timeout_ms = 10000
+unhealthy_threshold = 3
+
+# SAN-K7 has Maintenance Engine integration module
+[services.sank7.integration]
+module_id = "M6.2"
+bridge_type = "bidirectional"
+
+# -----------------------------------------------------------------------------
+# NAIS - Neural Adaptive Intelligence System (Tier 2)
+# -----------------------------------------------------------------------------
+[services.nais]
+name = "Neural Adaptive Intelligence"
+id = "nais"
+version = "1.0.0"
+host = "localhost"
+port = 8101
+
+protocol = "http"
+health_endpoint = "/health"
+api_prefix = "/api"
+
+capabilities = [
+    "neural_inference",
+    "pattern_recognition",
+    "adaptive_learning"
+]
+
+tier = 2
+weight = 1.3
+priority = 2
+synergy_target = 0.974
+
+[services.nais.circuit_breaker]
+enabled = true
+failure_threshold = 5
+timeout_secs = 30
+success_threshold = 3
+
+[services.nais.retry]
+max_attempts = 2
+initial_delay_ms = 1000
+max_delay_ms = 5000
+backoff_multiplier = 2.0
+
+[services.nais.health]
+interval_secs = 30
+timeout_ms = 50000
+unhealthy_threshold = 3
+
+# -----------------------------------------------------------------------------
+# CodeSynthor V7 (Tier 2)
+# -----------------------------------------------------------------------------
+[services.codesynthor]
+name = "CodeSynthor V7"
+id = "codesynthor-v7"
+version = "7.3.0"
+host = "localhost"
+port = 8110
+
+protocol = "http"
+health_endpoint = "/health"
+api_prefix = "/api"
+
+capabilities = [
+    "code_synthesis",
+    "module_generation",
+    "pattern_library"
+]
+
+tier = 2
+weight = 1.3
+priority = 2
+synergy_target = 0.985
+
+[services.codesynthor.circuit_breaker]
+enabled = true
+failure_threshold = 5
+timeout_secs = 30
+success_threshold = 3
+
+[services.codesynthor.retry]
+max_attempts = 2
+initial_delay_ms = 1000
+max_delay_ms = 5000
+backoff_multiplier = 2.0
+
+[services.codesynthor.health]
+interval_secs = 30
+timeout_ms = 50000
+unhealthy_threshold = 3
+
+# -----------------------------------------------------------------------------
+# DevOps Engine V2 (Tier 2)
+# -----------------------------------------------------------------------------
+[services.devops_engine]
+name = "DevOps Engine"
+id = "devops-engine"
+version = "2.0.0"
+host = "localhost"
+port = 8081
+
+protocol = "http"
+health_endpoint = "/health"
+api_prefix = "/api"
+
+capabilities = [
+    "neural_orchestration",
+    "deployment_management",
+    "infrastructure_control",
+    "hebbian_learning",
+    "tensor_memory"
+]
+
+tier = 2
+weight = 1.3
+priority = 2
+synergy_target = 0.978
+
+[services.devops_engine.circuit_breaker]
+enabled = true
+failure_threshold = 3
+timeout_secs = 60
+success_threshold = 2
+
+[services.devops_engine.retry]
+max_attempts = 2
+initial_delay_ms = 2000
+max_delay_ms = 10000
+backoff_multiplier = 2.0
+
+[services.devops_engine.health]
+interval_secs = 60
+timeout_ms = 50000
+unhealthy_threshold = 2
+
+# -----------------------------------------------------------------------------
+# Tool Library (Tier 3)
+# -----------------------------------------------------------------------------
+[services.tool_library]
+name = "Tool Library"
+id = "tool-library"
+version = "1.0.0"
+host = "localhost"
+port = 8105
+
+protocol = "http"
+health_endpoint = "/health"
+api_prefix = "/"
+
+capabilities = [
+    "tool_registry",
+    "tool_discovery",
+    "tool_metadata"
+]
+
+tier = 3
+weight = 1.2
+priority = 3
+synergy_target = 0.968
+
+[services.tool_library.circuit_breaker]
+enabled = true
+failure_threshold = 5
+timeout_secs = 30
+success_threshold = 3
+
+[services.tool_library.retry]
+max_attempts = 2
+initial_delay_ms = 500
+max_delay_ms = 3000
+backoff_multiplier = 2.0
+
+[services.tool_library.health]
+interval_secs = 60
+timeout_ms = 100000
+unhealthy_threshold = 3
+
+# -----------------------------------------------------------------------------
+# Library Agent (Tier 3)
+# -----------------------------------------------------------------------------
+[services.library_agent]
+name = "Library Agent"
+id = "library-agent"
+version = "1.0.0"
+host = "localhost"
+port = 8083
+
+protocol = "http"
+health_endpoint = "/health"
+api_prefix = "/api"
+
+capabilities = [
+    "document_management",
+    "library_operations",
+    "knowledge_retrieval"
+]
+
+tier = 3
+weight = 1.2
+priority = 3
+synergy_target = 0.968
+
+[services.library_agent.circuit_breaker]
+enabled = true
+failure_threshold = 5
+timeout_secs = 30
+success_threshold = 3
+
+[services.library_agent.retry]
+max_attempts = 2
+initial_delay_ms = 500
+max_delay_ms = 3000
+backoff_multiplier = 2.0
+
+[services.library_agent.health]
+interval_secs = 60
+timeout_ms = 100000
+unhealthy_threshold = 3
+
+# -----------------------------------------------------------------------------
+# Claude Context Manager (CCM) (Tier 3)
+# -----------------------------------------------------------------------------
+[services.ccm]
+name = "Claude Context Manager"
+id = "ccm"
+version = "1.0.0"
+host = "localhost"
+port = 8104
+
+protocol = "http"
+health_endpoint = "/health"
+api_prefix = "/api"
+
+capabilities = [
+    "context_management",
+    "memory_persistence",
+    "state_synchronization"
+]
+
+tier = 3
+weight = 1.2
+priority = 3
+synergy_target = 0.968
+
+[services.ccm.circuit_breaker]
+enabled = true
+failure_threshold = 3
+timeout_secs = 30
+success_threshold = 2
+
+[services.ccm.retry]
+max_attempts = 2
+initial_delay_ms = 500
+max_delay_ms = 3000
+backoff_multiplier = 2.0
+
+[services.ccm.health]
+interval_secs = 60
+timeout_ms = 100000
+unhealthy_threshold = 2
+
+# -----------------------------------------------------------------------------
+# Prometheus Swarm - CVA-NAM Fleet (Tier 4)
+# -----------------------------------------------------------------------------
+[services.prometheus_swarm]
+name = "Prometheus Swarm (CVA-NAM Fleet)"
+id = "prometheus-swarm"
+version = "1.0.0"
+host = "localhost"
+port = 10001
+port_range = { start = 10001, end = 10040 }
+
+protocol = "http"
+health_endpoint = "/health"
+api_prefix = "/api"
+
+capabilities = [
+    "distributed_consensus",
+    "pbft_voting",
+    "agent_coordination"
+]
+
+tier = 4
+weight = 1.1
+priority = 4
+synergy_target = 0.985
+
+# PBFT Configuration (n=40, f=13, q=27)
+[services.prometheus_swarm.pbft]
+n = 40                              # Total agents
+f = 13                              # Byzantine fault tolerance
+quorum = 27                         # 2f + 1
+
+[services.prometheus_swarm.circuit_breaker]
+enabled = true
+failure_threshold = 5
+timeout_secs = 60
+success_threshold = 3
+
+[services.prometheus_swarm.health]
+interval_secs = 60
+timeout_ms = 200000
+unhealthy_threshold = 3
+
+# -----------------------------------------------------------------------------
+# Architect Agent (Tier 4)
+# -----------------------------------------------------------------------------
+[services.architect_agent]
+name = "Architect Agent"
+id = "architect-agent"
+version = "1.0.0"
+host = "localhost"
+port = 9001
+
+protocol = "http"
+health_endpoint = "/health"
+api_prefix = "/api"
+
+capabilities = [
+    "pattern_library",
+    "architecture_design",
+    "system_modeling"
+]
+
+tier = 4
+weight = 1.1
+priority = 4
+synergy_target = 0.975
+
+[services.architect_agent.circuit_breaker]
+enabled = true
+failure_threshold = 3
+timeout_secs = 60
+success_threshold = 2
+
+[services.architect_agent.health]
+interval_secs = 60
+timeout_ms = 200000
+unhealthy_threshold = 2
+
+# -----------------------------------------------------------------------------
+# Bash Engine (Tier 5)
+# -----------------------------------------------------------------------------
+[services.bash_engine]
+name = "Bash Engine"
+id = "bash-engine"
+version = "1.0.0"
+host = "localhost"
+port = 8102
+
+protocol = "http"
+health_endpoint = "/health"
+api_prefix = "/api"
+
+capabilities = [
+    "command_execution",
+    "script_running",
+    "shell_interaction"
+]
+
+tier = 5
+weight = 1.0
+priority = 5
+synergy_target = 0.960
+
+[services.bash_engine.circuit_breaker]
+enabled = true
+failure_threshold = 3
+timeout_secs = 60
+success_threshold = 2
+
+[services.bash_engine.retry]
+max_attempts = 1
+initial_delay_ms = 1000
+max_delay_ms = 5000
+backoff_multiplier = 2.0
+
+[services.bash_engine.health]
+interval_secs = 60
+timeout_ms = 500000
+unhealthy_threshold = 2
+
+# Security: This service executes commands
+[services.bash_engine.security]
+sandboxed = true
+allowed_commands = []               # Empty = no restrictions (configure in service)
+max_execution_time_secs = 300
+
+# -----------------------------------------------------------------------------
+# Tool Maker (Tier 5)
+# -----------------------------------------------------------------------------
+[services.tool_maker]
+name = "Tool Maker"
+id = "tool-maker"
+version = "1.55.0"
+host = "localhost"
+port = 8103
+
+protocol = "grpc"                   # gRPC service
+health_endpoint = "/grpc.health.v1.Health/Check"
+api_prefix = "/api"
+
+capabilities = [
+    "tool_creation",
+    "tool_modification",
+    "tool_validation"
+]
+
+tier = 5
+weight = 1.0
+priority = 5
+synergy_target = 0.960
+
+[services.tool_maker.circuit_breaker]
+enabled = true
+failure_threshold = 3
+timeout_secs = 30
+success_threshold = 2
+
+[services.tool_maker.retry]
+max_attempts = 2
+initial_delay_ms = 1000
+max_delay_ms = 5000
+backoff_multiplier = 2.0
+
+[services.tool_maker.health]
+interval_secs = 60
+timeout_ms = 500000
+unhealthy_threshold = 2
+
+# -----------------------------------------------------------------------------
+# Global Circuit Breaker Defaults
+# -----------------------------------------------------------------------------
+[circuit_breaker.defaults]
+enabled = true
+failure_threshold = 5
+timeout_secs = 30
+success_threshold = 3
+half_open_max_calls = 3
+
+# -----------------------------------------------------------------------------
+# Global Retry Defaults
+# -----------------------------------------------------------------------------
+[retry.defaults]
+max_attempts = 3
+initial_delay_ms = 500
+max_delay_ms = 10000
+backoff_multiplier = 2.0
+jitter = true
+jitter_factor = 0.1
+
+# -----------------------------------------------------------------------------
+# Global Health Check Defaults
+# -----------------------------------------------------------------------------
+[health.defaults]
+interval_secs = 30
+timeout_ms = 5000
+unhealthy_threshold = 3
+healthy_threshold = 1
+
+# -----------------------------------------------------------------------------
+# Load Balancing
+# -----------------------------------------------------------------------------
+[load_balancing]
+strategy = "weighted"               # round_robin, least_connections, random, weighted
+sticky_sessions = false
+health_check_filter = true          # Only route to healthy services
+
+# Weighted routing based on tier weights
+[load_balancing.weights]
+synthex = 1.5                       # Tier 1
+sank7 = 1.5                         # Tier 1
+nais = 1.3                          # Tier 2
+codesynthor = 1.3                   # Tier 2
+devops_engine = 1.3                 # Tier 2
+tool_library = 1.2                  # Tier 3
+library_agent = 1.2                 # Tier 3
+ccm = 1.2                           # Tier 3
+prometheus_swarm = 1.1              # Tier 4
+architect_agent = 1.1               # Tier 4
+bash_engine = 1.0                   # Tier 5
+tool_maker = 1.0                    # Tier 5
+
+# -----------------------------------------------------------------------------
+# Service Mesh Observability
+# -----------------------------------------------------------------------------
+[observability]
+# Tracing
+trace_all_requests = true
+trace_sample_rate = 0.1             # 10% sampling in production
+
+# Metrics
+collect_latency = true
+collect_error_rate = true
+collect_throughput = true
+collect_synergy = true              # Track cross-service synergy
+
+# Logging
+log_requests = true
+log_responses = false               # Can be verbose
+log_errors = true
+
+# -----------------------------------------------------------------------------
+# Cross-Service Synergy Tracking
+# -----------------------------------------------------------------------------
+[synergy]
+# Synergy thresholds
+minimum_threshold = 0.85            # Below this triggers alert
+target_threshold = 0.93             # System-wide target
+excellent_threshold = 0.98          # Excellent synergy
+
+# Synergy measurement
+measurement_interval_secs = 60
+history_retention_days = 30

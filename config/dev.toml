@@ -1,0 +1,167 @@
+# =============================================================================
+# The Maintenance Engine - Development Environment Configuration
+# =============================================================================
+# This file contains overrides for local development.
+# Base configuration is in default.toml
+# =============================================================================
+
+# Development-optimized server settings
+[server]
+host = "127.0.0.1"
+port = 8080
+grpc_port = 8081
+websocket_port = 8082
+max_connections = 100
+request_timeout_ms = 60000       # Longer timeout for debugging
+shutdown_timeout_secs = 5        # Quick shutdown in dev
+
+# Development database settings
+[database]
+base_path = "data/dev"
+pool_size = 5
+max_overflow = 2
+timeout_ms = 10000               # Longer timeout for debugging
+wal_mode = true
+busy_timeout_ms = 5000
+
+# Smaller pool sizes for development
+[database.pools.service_tracking]
+pool_size = 5
+
+[database.pools.system_synergy]
+pool_size = 3
+
+[database.pools.hebbian_pulse]
+pool_size = 3
+
+[database.pools.consensus_tracking]
+pool_size = 2
+
+[database.pools.episodic_memory]
+pool_size = 2
+
+[database.pools.tensor_memory]
+pool_size = 3
+
+[database.pools.performance_metrics]
+pool_size = 2
+
+[database.pools.flow_state]
+pool_size = 2
+
+[database.pools.security_events]
+pool_size = 2
+
+# Relaxed pipeline settings for development
+[pipelines]
+health_check_interval_ms = 60000     # Less frequent checks
+log_batch_size = 100                 # Smaller batches
+metrics_scrape_interval_ms = 30000
+
+# Relaxed SLOs for development
+[pipelines.health]
+latency_slo_ms = 500
+error_budget = 0.01
+
+[pipelines.log]
+latency_slo_ms = 200
+error_budget = 0.05
+
+[pipelines.remediation]
+latency_slo_ms = 2000
+error_budget = 0.01
+
+# Wire configuration (more tolerant)
+[wires]
+default_timeout_ms = 10000
+retry_max_attempts = 5
+retry_backoff_multiplier = 1.5
+retry_initial_delay_ms = 500
+retry_max_delay_ms = 10000
+
+[wires.circuit_breaker]
+failure_threshold = 10           # More tolerant of failures
+success_threshold = 2
+timeout_ms = 60000
+half_open_requests = 3
+
+# PBFT consensus (can be disabled in dev)
+[consensus]
+enabled = false                  # Disable for simpler dev testing
+n_agents = 40
+f_tolerance = 13
+quorum = 27
+default_timeout_ms = 10000
+
+# Relaxed Hebbian learning for faster iteration
+[hebbian]
+ltp_rate = 0.1
+ltd_rate = 0.05
+stdp_window_ms = 100
+decay_rate = 0.01                # Faster decay for testing
+min_strength = 0.05
+max_strength = 1.0
+prune_after_days = 1             # Faster pruning in dev
+pulse_interval_seconds = 60      # More frequent pulses
+
+# 12D tensor (same as production)
+[tensor]
+dimensions = 12
+encoding = "float64"
+hnsw_m = 16
+hnsw_ef_construction = 200
+hnsw_ef_search = 100
+
+# Relaxed escalation for development
+[escalation]
+l0_confidence_threshold = 0.8    # Lower threshold for auto-execute
+l0_max_severity = "HIGH"         # Allow more auto-execution
+l0_timeout_ms = 0
+l1_confidence_threshold = 0.5
+l1_timeout_ms = 600000           # 10 min
+l2_timeout_ms = 3600000          # 1 hour
+l3_quorum = 27
+
+# Verbose logging for development
+[logging]
+level = "debug"
+format = "pretty"                # Human-readable format
+output = "stdout"
+file = "logs/dev/maintenance_engine.log"
+rotation_max_size_mb = 50
+rotation_max_age_days = 3
+rotation_max_backups = 3
+compress_rotated = false
+
+# Development monitoring
+[monitoring]
+metrics_port = 9090
+tracing_enabled = true
+tracing_sample_rate = 1.0        # Sample everything in dev
+tracing_endpoint = "http://localhost:4317"
+
+# NAM compliance (can be relaxed in dev)
+[nam]
+target_compliance = 0.80         # Lower target for dev
+current_compliance = 0.0
+r1_self_query_enabled = true
+r2_hebbian_routing_enabled = true
+r3_dissent_capture_enabled = false  # Disable for simpler testing
+r4_field_visualization_enabled = true
+r5_human_as_agent_enabled = false   # Disable human-in-loop for dev
+
+# ULTRAPLATE services may not be running
+[ultraplate]
+enabled = false                  # Disable by default in dev
+discovery_interval_secs = 120
+
+# Development state settings
+[state]
+auto_save_interval_secs = 60
+directory = "data/dev/state"
+
+# Relaxed security for development
+[security]
+rate_limit_enabled = false       # No rate limiting in dev
+cors_enabled = true
+cors_origins = ["*"]             # Allow all origins in dev

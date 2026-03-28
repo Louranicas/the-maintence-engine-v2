@@ -1,0 +1,116 @@
+{
+  "project": {
+    "name": "The Maintenance Engine",
+    "version": "1.0.0+HRS-001",
+    "status": "INTEGRATED",
+    "port": 8080,
+    "completion": 1.0,
+    "nam_compliance": 0.0,
+    "nam_target": 0.92,
+    "modules": 47,
+    "modules_planned": 10,
+    "modules_planned_range": "M48-M57",
+    "databases": 11,
+    "pipelines": 8,
+    "pipelines_target": 11,
+    "source_files": 66,
+    "loc": 62390,
+    "tests": 2288,
+    "clippy": 0,
+    "git_remotes": {
+      "gitlab": "git@gitlab.com:lukeomahoney/the-maintenance-engine.git",
+      "github": "git@github.com:Louranicas/the-maintenance-engine.git"
+    }
+  },
+  "architecture": {
+    "modules": 47,
+    "layers": 7,
+    "tensor_dimensions": 12,
+    "layer_map": {
+      "L1": {"name": "foundation", "range": "M00-M08,M43", "module_count": 10, "modules": ["shared_types", "error", "config", "logging", "metrics", "state", "resources", "signals", "tensor_registry", "nam"]},
+      "L2": {"name": "services", "range": "M09-M12", "module_count": 4, "modules": ["service_registry", "health_monitor", "lifecycle", "resilience"], "refactored": "2026-02-28"},
+      "L3": {"name": "core_logic", "range": "M13-M18", "module_count": 6, "modules": ["pipeline", "remediation", "confidence", "action", "outcome", "feedback"]},
+      "L4": {"name": "integration", "range": "M19-M24,M42,M46-M47", "module_count": 9, "modules": ["rest", "grpc", "websocket", "ipc", "event_bus", "bridge", "cascade_bridge", "peer_bridge", "tool_registrar"]},
+      "L5": {"name": "learning", "range": "M25-M30,M41", "module_count": 7, "modules": ["hebbian", "stdp", "pattern", "pruner", "consolidator", "antipattern", "decay_scheduler"]},
+      "L6": {"name": "consensus", "range": "M31-M36", "module_count": 6, "modules": ["pbft", "agent", "voting", "view_change", "dissent", "quorum"]},
+      "L7": {"name": "observer", "range": "M37-M40,M44-M45", "module_count": 6, "modules": ["log_correlator", "emergence_detector", "evolution_chamber", "thermal_monitor", "observer_bus", "fitness"]}
+    }
+  },
+  "tensor": {
+    "dimensions": 12,
+    "names": ["service_id", "port", "tier", "dependency_count", "agent_count", "protocol", "health_score", "uptime", "synergy", "latency", "error_rate", "temporal_context"],
+    "ranges": {
+      "D0": [0, 13], "D1": [8080, 10001], "D2": [1, 5], "D3": [0, 12], "D4": [0, 40], "D5": [0, 3],
+      "D6": [0.0, 1.0], "D7": [0.0, 1.0], "D8": [0.0, 1.0], "D9": [0.0, 1.0], "D10": [0.0, 1.0], "D11": [0.0, 1.0]
+    },
+    "gaps": {
+      "D3": "placeholder 0.0 — M49 Traffic will fill",
+      "D5": "hardcoded 0.0 — M53 OracBridge will fill",
+      "D11": "weak proxy — M55 Sequence will become primary owner"
+    }
+  },
+  "databases": {
+    "total": 11,
+    "names": ["service_tracking", "system_synergy", "hebbian_pulse", "consensus_tracking", "episodic_memory", "tensor_memory", "performance_metrics", "flow_state", "security_events", "workflow_tracking", "evolution_tracking"],
+    "path": "data/databases/",
+    "planned_tables": ["self_observations", "traffic_scores", "auth_tokens", "failure_predictions", "temporal_sequences", "cognitive_checkpoints"]
+  },
+  "pipelines": {
+    "total": 8,
+    "ids": ["PL-HEALTH-001", "PL-LOG-001", "PL-REMEDIATE-001", "PL-HEBBIAN-001", "PL-CONSENSUS-001", "PL-TENSOR-001", "PL-DISCOVERY-001", "PL-METRICS-001"],
+    "planned": ["PL-PREDICT-001", "PL-AUTH-001", "PL-DISSENT-001"]
+  },
+  "consensus": {
+    "n": 40,
+    "f": 13,
+    "q": 27,
+    "agent_roles": {"VALIDATOR": 20, "EXPLORER": 8, "CRITIC": 6, "INTEGRATOR": 4, "HISTORIAN": 2}
+  },
+  "services": {
+    "total": 13,
+    "by_tier": {
+      "tier_1": ["synthex", "san-k7"],
+      "tier_2": ["nais", "codesynthor-v7", "devops-engine"],
+      "tier_3": ["tool-library", "ccm", "reasoning-memory"],
+      "tier_4": ["prometheus-swarm", "architect-agent"],
+      "tier_5": ["bash-engine", "tool-maker", "pane-vortex"]
+    }
+  },
+  "integrations": {
+    "synthex": {"port": 8090, "synergy": 85.0},
+    "san-k7": {"port": 8100, "synergy": 88.0},
+    "nais": {"port": 8101, "synergy": 86.0},
+    "codesynthor-v7": {"port": 8110, "synergy": 0.0},
+    "devops-engine": {"port": 8081, "synergy": 95.0},
+    "tool-library": {"port": 8105, "synergy": 90.0},
+    "pane-vortex": {"port": 8132, "synergy": 0.0},
+    "orac-sidecar": {"port": 8133, "synergy": 0.0, "planned_bridge": "M53"}
+  },
+  "learning": {
+    "ltp_rate": 0.1,
+    "ltd_rate": 0.05,
+    "stdp_window_ms": 100,
+    "decay_rate": 0.001,
+    "decay_rate_target": 0.1,
+    "decay_rate_note": "HRS-001 fix not propagated to StdpConfig::default — still 0.001",
+    "healthy_ratio": [2.0, 4.0]
+  },
+  "homeostatic": {
+    "target_health": 0.95,
+    "target_synergy": 0.90,
+    "target_uptime": 0.99,
+    "adaptation_rate": 0.01
+  },
+  "planned_modules": {
+    "M48": {"name": "Self Model", "layer": "L1", "file": "self_model.rs", "trait": "SelfModelProvider", "est_loc": 800},
+    "M49": {"name": "Traffic Manager", "layer": "L2", "file": "traffic.rs", "trait": "TrafficShaping", "est_loc": 700},
+    "M50": {"name": "Approval Workflow", "layer": "L3", "file": "approval.rs", "trait": "ApprovalWorkflow", "est_loc": 950},
+    "M51": {"name": "Auth Handler", "layer": "L4", "file": "auth.rs", "trait": "Authenticator", "est_loc": 700},
+    "M52": {"name": "Rate Limiter", "layer": "L4", "file": "rate_limiter.rs", "trait": "RateLimiting", "est_loc": 650},
+    "M53": {"name": "ORAC Bridge", "layer": "L4", "file": "orac_bridge.rs", "trait": "OracBridge", "est_loc": 750},
+    "M54": {"name": "Prediction Engine", "layer": "L5", "file": "prediction.rs", "trait": "PredictionEngine", "est_loc": 800},
+    "M55": {"name": "Sequence Detector", "layer": "L5", "file": "sequence.rs", "trait": "SequenceDetector", "est_loc": 700},
+    "M56": {"name": "Checkpoint Manager", "layer": "L6", "file": "checkpoint.rs", "trait": "CheckpointManager", "est_loc": 400},
+    "M57": {"name": "Active Dissent", "layer": "L6", "file": "active_dissent.rs", "trait": "DissentGenerator", "est_loc": 500}
+  }
+}

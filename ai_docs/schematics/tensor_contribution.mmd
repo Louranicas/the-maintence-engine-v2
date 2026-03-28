@@ -1,0 +1,42 @@
+graph TD
+    subgraph TENSOR["12D Tensor Encoding"]
+        D0["D0: service_id"]
+        D1["D1: port"]
+        D2["D2: tier"]
+        D3["D3: dependency_count"]
+        D4["D4: agent_count"]
+        D5["D5: protocol"]
+        D6["D6: health_score"]
+        D7["D7: uptime"]
+        D8["D8: synergy"]
+        D9["D9: latency"]
+        D10["D10: error_rate"]
+        D11["D11: temporal_context"]
+    end
+
+    M09["M09 Service Registry"] --> D0
+    M09 --> D1
+    M09 --> D2
+    M09 --> D3
+    M09 --> D4
+
+    M19["M19-M22 Integration"] --> D5
+
+    M10["M10 Health Monitor"] --> D6
+    M10 --> D10
+
+    M11["M11 Lifecycle Manager"] --> D6
+    M11 --> D7
+
+    M12["M12 Resilience"] --> D9
+    M12 --> D10
+
+    M24["M24 Bridge + N01 Field"] --> D8
+
+    M05["M05 State + N01 Field"] --> D11
+
+    N04["N04 STDP Bridge"] --> D8
+
+    FIT["Fitness Evaluator"] ---|aggregate all| TENSOR
+
+    style TENSOR fill:#1a1a2e,color:#fff

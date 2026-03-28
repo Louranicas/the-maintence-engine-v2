@@ -1,0 +1,112 @@
+[package]
+name = "maintenance_engine_v2"
+version = "2.0.0"
+edition = "2021"
+authors = ["Maintenance Engine Team"]
+description = "Next-generation maintenance engine with Nexus integration, Kuramoto field coherence, and morphogenic adaptation"
+license = "MIT"
+repository = "https://github.com/ultraplate/maintenance-engine"
+keywords = ["maintenance", "monitoring", "pbft", "hebbian", "orchestration"]
+categories = ["development-tools", "network-programming"]
+readme = "README.md"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+multiple_crate_versions = "allow"
+
+[features]
+default = ["full"]
+full = ["api", "database", "observability"]
+api = []
+database = []
+observability = []
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Web framework
+axum = "0.7"
+
+# Database
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Concurrency
+parking_lot = "0.12"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID generation
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# HTTP client for peer communication
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Tower middleware
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
+rand = "0.8"
+tempfile = "3.10"
+proptest = "1.4"
+
+[[bench]]
+name = "tensor_encoding"
+harness = false
+
+[[bench]]
+name = "health_monitoring"
+harness = false
+
+[[bench]]
+name = "pbft_consensus"
+harness = false
+
+[[bench]]
+name = "hebbian_learning"
+harness = false
+
+[[bench]]
+name = "pipeline_execution"
+harness = false
+
+[[bench]]
+name = "service_registry"
+harness = false
+
+[[bench]]
+name = "database_operations"
+harness = false
+
+[[bench]]
+name = "lock_contention"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = 3

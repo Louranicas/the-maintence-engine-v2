@@ -1,0 +1,44 @@
+graph TB
+    subgraph ENGINE["Maintenance Engine V2"]
+        DB["DatabaseManager\n12 SQLite databases"]
+    end
+
+    subgraph TIER1["Tier 1: Essential"]
+        ST["service_tracking.db\n13 services, health checks"]
+        SS["system_synergy.db\n40 synergy pairs"]
+        PM["performance_metrics.db\n7 metric samples"]
+    end
+
+    subgraph TIER2["Tier 2: Learning"]
+        HP["hebbian_pulse.db\nPathways, LTP/LTD events"]
+        ET["evolution_tracking.db\n19,803 fitness records"]
+        TM["tensor_memory.db\n6 tensor snapshots"]
+        EM["episodic_memory.db\n25 episodes"]
+    end
+
+    subgraph TIER3["Tier 3: Observability"]
+        WT["workflow_tracking.db\n6 definitions, 10 executions"]
+        FS["flow_state.db\n5 state definitions"]
+        SE["security_events.db\nThreat monitoring"]
+        CT["consensus_tracking.db\n2 rounds, 80 votes"]
+        RL["remediation_log.db\nAction outcomes"]
+    end
+
+    DB --> TIER1
+    DB --> TIER2
+    DB --> TIER3
+
+    ST -.->|service health| SS
+    SS -.->|synergy scores| HP
+    HP -.->|pathway weights| ET
+    ET -.->|fitness| TM
+    TM -.->|tensor snapshots| EM
+
+    ST -.->|service events| SE
+    CT -.->|consensus results| WT
+    RL -.->|remediation outcomes| FS
+
+    style TIER1 fill:#2d5016,color:#fff
+    style TIER2 fill:#4a1942,color:#fff
+    style TIER3 fill:#3a2a0a,color:#fff
+    style ENGINE fill:#1a1a2e,color:#fff

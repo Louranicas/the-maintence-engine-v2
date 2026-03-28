@@ -1,0 +1,193 @@
+# =============================================================================
+# The Maintenance Engine - L7 Observer Layer Configuration
+# =============================================================================
+# Configuration for the L7 Observer Layer: Log Correlator (M37),
+# Emergence Detector (M38), Evolution Chamber (M39), Fitness Evaluator,
+# and Observer Bus.
+#
+# L7 is a cross-cutting observer layer that monitors L1-L6 without modifying
+# them. When observer.enabled = false, L7 adds zero cost (no memory, no CPU,
+# no subscriptions, no locks).
+#
+# See: ai_specs/evolution_chamber_ai_specs/OBSERVER_LAYER_SPEC.md
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Top-Level Observer Configuration
+# -----------------------------------------------------------------------------
+[observer]
+# Whether L7 is enabled. When false, ObserverLayer is None (zero cost).
+enabled = true                              # true | false
+
+# -----------------------------------------------------------------------------
+# M37: Log Correlator
+# -----------------------------------------------------------------------------
+# Cross-layer event correlation engine. Subscribes to all 6 EventBus channels
+# and discovers temporal, causal, semantic, and recurring correlations.
+# Publishes correlated events to the "observation" channel.
+[observer.log_correlator]
+# Duration of each correlation window in milliseconds.
+# Events within the same window are candidates for correlation.
+# Range: [1000, 30000]
+window_size_ms = 5000
+
+# Maximum events buffered per correlation window.
+# When exceeded, oldest events are evicted from the window.
+# Range: [100, 100000]
+max_buffer_size = 10000
+
+# Minimum confidence score (0.0-1.0) to emit a correlation.
+# Correlations below this threshold are discarded.
+# Range: [0.0, 1.0]
+min_correlation_confidence = 0.6
+
+# Minimum number of recurrences to flag a pattern as "recurring".
+# Prevents false positives from one-off coincidences.
+# Range: [2, 100]
+min_recurring_count = 3
+
+# Temporal tolerance in milliseconds for "simultaneous" events.
+# Events within this tolerance are considered temporally correlated.
+# Range: [10, 5000]
+temporal_tolerance_ms = 500
+
+# -----------------------------------------------------------------------------
+# M38: Emergence Detector
+# -----------------------------------------------------------------------------
+# Detects emergent behaviors from correlated events: cascade failures,
+# synergy shifts, resonance cycles, attractor formations, phase transitions,
+# and beneficial emergences. Publishes to the "emergence" channel.
+[observer.emergence_detector]
+# Cascade depth threshold to trigger a CascadeFailure alert.
+# A cascade must reach this depth before it is flagged.
+# Range: [2, 10]
+cascade_depth_threshold = 3
+
+# Synergy score delta threshold to trigger a SynergyShift detection.
+# The absolute change in synergy score must exceed this value.
+# Range: [0.01, 0.50]
+synergy_delta_threshold = 0.15
+
+# Minimum number of oscillatory cycles for ResonanceCycle detection.
+# Prevents false resonance detection from transient fluctuations.
+# Range: [2, 20]
+resonance_min_cycles = 3
+
+# Maximum emergence records retained in the history ring buffer.
+# Oldest records are evicted when capacity is reached.
+# Range: [100, 10000]
+history_capacity = 1000
+
+# Interval in milliseconds between detection cycles.
+# Controls how frequently M38 analyzes incoming correlations.
+# Range: [100, 10000]
+detection_interval_ms = 1000
+
+# Minimum confidence score (0.0-1.0) to emit an emergence record.
+# Detections below this threshold are discarded.
+# Range: [0.0, 1.0]
+min_confidence = 0.7
+
+# -----------------------------------------------------------------------------
+# M39: Evolution Chamber
+# -----------------------------------------------------------------------------
+# RALPH loop (Recognize-Analyze-Learn-Propose-Harvest) meta-learning engine.
+# Generates, verifies, and applies parameter mutations based on emergence
+# data and fitness evaluations. Publishes to the "evolution" channel.
+[observer.evolution_chamber]
+# Maximum number of mutations running concurrently.
+# Limits resource consumption and prevents mutation interference.
+# Range: [1, 10]
+max_concurrent_mutations = 3
+
+# Time allowed for mutation verification in milliseconds.
+# After applying a mutation, the system monitors fitness for this duration
+# before accepting or rolling back.
+# Range: [5000, 300000]
+mutation_verification_ms = 30000
+
+# Maximum fitness snapshots retained in the EvolutionChamber's internal
+# history buffer. At 1-min intervals, 500 entries covers ~8 hours.
+# Note: This is distinct from observer.fitness.history_capacity (200),
+# which sizes the FitnessEvaluator's FitnessReport buffer.
+# Range: [50, 5000]
+fitness_history_capacity = 500
+
+# Maximum mutation records retained in the history ring buffer.
+# Oldest records are evicted when capacity is reached.
+# Range: [100, 10000]
+mutation_history_capacity = 1000
+
+# Minimum fitness improvement (0.0-1.0) to auto-apply a mutation without
+# requiring PBFT consensus. Mutations with improvement >= this threshold
+# are applied immediately. Mutations below this threshold require
+# PBFT consensus (27/40 agents).
+# Range: [0.01, 0.50]
+auto_apply_threshold = 0.10
+
+# Fitness decline threshold that triggers automatic rollback.
+# If fitness drops by more than |rollback_threshold| during verification,
+# the mutation is rolled back immediately.
+# Range: [-0.20, 0.0]
+rollback_threshold = -0.02
+
+# Minimum interval in milliseconds between evolution generations.
+# Prevents rapid-fire mutation cycles from destabilizing the system.
+# Range: [10000, 600000]
+min_generation_interval_ms = 60000
+
+# Maximum parameter change (delta) per mutation.
+# Mutations are clamped to this range: [-max_mutation_delta, +max_mutation_delta].
+# Prevents large destabilizing parameter jumps.
+# Range: [0.01, 0.50]
+max_mutation_delta = 0.20
+
+# -----------------------------------------------------------------------------
+# Fitness Evaluator
+# -----------------------------------------------------------------------------
+# 12D tensor fitness scoring utility. Evaluates system fitness using the
+# Tensor12D representation with weighted dimension contributions.
+# Used by M39 to assess mutation effectiveness.
+[observer.fitness]
+# Maximum FitnessReport snapshots retained in the FitnessEvaluator's
+# history ring buffer. Oldest reports are evicted when capacity is reached.
+# Note: This is distinct from observer.evolution_chamber.fitness_history_capacity
+# (500), which sizes M39's internal FitnessSnapshot buffer.
+# Range: [10, 1000]
+history_capacity = 200
+
+# Number of recent snapshots used for trend calculation.
+# The trend is computed as the slope of fitness over this window.
+# Range: [3, 50]
+trend_window = 10
+
+# Standard deviation below which fitness is considered "stable".
+# When the std dev of the trend window falls below this value,
+# the system is in a stable state.
+# Range: [0.001, 0.10]
+stability_tolerance = 0.02
+
+# Standard deviation above which fitness is considered "volatile".
+# When the std dev of the trend window exceeds this value,
+# the system is in a volatile state and mutations are paused.
+# Range: [0.01, 0.20]
+volatility_threshold = 0.05
+
+# -----------------------------------------------------------------------------
+# Observer Bus (Internal L7 Pub/Sub)
+# -----------------------------------------------------------------------------
+# Internal message bus connecting M37, M38, M39, and the Fitness Evaluator.
+# All communication is in-process; no network sockets are created.
+[observer.bus]
+# Maximum messages retained per internal channel.
+# Oldest messages are evicted when capacity is reached.
+# Range: [50, 5000]
+max_messages_per_channel = 500
+
+# Number of internal channels (correlation, emergence, evolution, fitness, phase).
+# This is informational; channels are created automatically.
+channel_count = 5
+
+# Whether to log internal bus message flow (debug/development only).
+# Produces high-volume output; disable in production.
+debug_logging = false

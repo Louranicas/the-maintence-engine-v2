@@ -1,0 +1,54 @@
+graph LR
+    subgraph ULTRAPLATE["ULTRAPLATE Services"]
+        SYN[SYNTHEX :8090]
+        SK7[SAN-K7 :8100]
+        NAIS[NAIS :8101]
+        CS7[CodeSynthor :8110]
+        DOE[DevOps :8081]
+        TL[Tool Library :8105]
+        BAS[Bash Engine :8102]
+        TM[Tool Maker :8103]
+        CCM[CCM :8104]
+        SVF[SVF :8120]
+    end
+
+    subgraph MEv2["Maintenance Engine V2 :8080"]
+        REST[M19 REST Client]
+        GRPC[M20 gRPC Client]
+        WS[M21 WebSocket]
+        IPC[M22 IPC]
+        BR[M24 Bridge Manager]
+        TR[Tool Registrar]
+        PB[Peer Bridge]
+
+        subgraph NEXUS["L8 Nexus"]
+            FB[N01 Field Bridge]
+            IR[N02 Intent Router]
+            SB[N04 STDP Bridge]
+        end
+    end
+
+    REST -->|health poll| SYN
+    REST -->|health poll| SK7
+    REST -->|health poll| NAIS
+    REST -->|health poll| CS7
+    REST -->|health poll| DOE
+    REST -->|health poll| TL
+    REST -->|health poll| BAS
+    REST -->|health poll| TM
+    REST -->|health poll| CCM
+    WS -->|field stream| SVF
+    GRPC -->|binary RPC| SK7
+    IPC -->|local pipe| BAS
+    TR -->|register 15 tools| TL
+    PB -->|synergy sync| SYN
+
+    IR -->|intent route| SK7
+    IR -->|intent route| SYN
+    IR -->|intent route| DOE
+    SB -->|STDP learn| SYN
+    FB -->|r-track| SVF
+
+    style MEv2 fill:#1a1a2e,color:#fff
+    style NEXUS fill:#4a1942,color:#fff
+    style ULTRAPLATE fill:#0d2137,color:#fff

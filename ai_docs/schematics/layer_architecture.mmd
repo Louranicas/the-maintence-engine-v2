@@ -1,0 +1,98 @@
+graph TB
+    subgraph L8["L8: NEXUS (NEW)"]
+        N01[N01 Field Bridge]
+        N02[N02 Intent Router]
+        N03[N03 Regime Manager]
+        N04[N04 STDP Bridge]
+        N05[N05 Evolution Gate]
+        N06[N06 Morphogenic Adapter]
+    end
+
+    subgraph L7["L7: OBSERVER"]
+        M37[M37 Log Correlator]
+        M38[M38 Emergence Detector]
+        M39[M39 Evolution Chamber]
+        OB[Observer Bus]
+        FIT[Fitness Evaluator]
+    end
+
+    subgraph L6["L6: CONSENSUS"]
+        M31[M31 PBFT Manager]
+        M32[M32 Agent Coordinator]
+        M33[M33 Vote Collector]
+        M34[M34 View Change]
+        M35[M35 Dissent Tracker]
+        M36[M36 Quorum Calculator]
+    end
+
+    subgraph L5["L5: LEARNING"]
+        M25[M25 Hebbian Manager]
+        M26[M26 STDP Processor]
+        M27[M27 Pattern Recognizer]
+        M28[M28 Pathway Pruner]
+        M29[M29 Memory Consolidator]
+        M30[M30 Anti-Pattern]
+    end
+
+    subgraph L4["L4: INTEGRATION"]
+        M19[M19 REST]
+        M20[M20 gRPC]
+        M21[M21 WebSocket]
+        M22[M22 IPC]
+        M23[M23 Event Bus]
+        M24[M24 Bridge]
+    end
+
+    subgraph L3["L3: CORE LOGIC"]
+        M13[M13 Pipeline]
+        M14[M14 Remediation]
+        M15[M15 Confidence]
+        M16[M16 Action]
+        M17[M17 Outcome]
+        M18[M18 Feedback]
+    end
+
+    subgraph L2["L2: SERVICES (CLONED)"]
+        M09[M09 Registry]
+        M10[M10 Health]
+        M11[M11 Lifecycle]
+        M12[M12 Resilience]
+    end
+
+    subgraph L1["L1: FOUNDATION (CLONED)"]
+        M01[M01 Error]
+        M02[M02 Config]
+        M03[M03 Logging]
+        M04[M04 Metrics]
+        M05[M05 State]
+        M06[M06 Resources]
+        M07[M07 Signals]
+        M08[M08 Tensor]
+    end
+
+    subgraph V3["V3: HOMEOSTASIS"]
+        M40[M40 Thermal]
+        M41[M41 Decay Auditor]
+        M42[M42 Diagnostics]
+    end
+
+    L8 --> L7
+    L7 --> L6
+    L7 --> L5
+    L6 --> L5
+    L5 --> L4
+    L4 --> L3
+    L3 --> L2
+    L2 --> L1
+    V3 --> L5
+    V3 --> L1
+
+    N01 -.->|field coherence| OB
+    N04 -.->|STDP learning| M26
+    N05 -.->|mutation test| M39
+    N06 -.->|adaptation| M38
+
+    style L1 fill:#2d5016,color:#fff
+    style L2 fill:#2d5016,color:#fff
+    style L8 fill:#4a1942,color:#fff
+    style V3 fill:#8b4513,color:#fff

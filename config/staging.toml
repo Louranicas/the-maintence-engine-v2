@@ -1,0 +1,181 @@
+# =============================================================================
+# The Maintenance Engine - Staging Environment Configuration
+# =============================================================================
+# This file contains overrides for staging/testing environment.
+# Base configuration is in default.toml
+# =============================================================================
+
+# Staging server settings (production-like)
+[server]
+host = "0.0.0.0"                 # Accept external connections
+port = 8080
+grpc_port = 8081
+websocket_port = 8082
+max_connections = 500
+request_timeout_ms = 30000
+shutdown_timeout_secs = 30
+
+# Staging database settings
+[database]
+base_path = "data/staging"
+pool_size = 8
+max_overflow = 4
+timeout_ms = 5000
+wal_mode = true
+busy_timeout_ms = 3000
+
+# Moderate pool sizes for staging
+[database.pools.service_tracking]
+pool_size = 8
+
+[database.pools.system_synergy]
+pool_size = 4
+
+[database.pools.hebbian_pulse]
+pool_size = 4
+
+[database.pools.consensus_tracking]
+pool_size = 3
+
+[database.pools.episodic_memory]
+pool_size = 3
+
+[database.pools.tensor_memory]
+pool_size = 4
+
+[database.pools.performance_metrics]
+pool_size = 3
+
+[database.pools.flow_state]
+pool_size = 3
+
+[database.pools.security_events]
+pool_size = 3
+
+# Production-like pipeline settings
+[pipelines]
+health_check_interval_ms = 30000
+log_batch_size = 500
+metrics_scrape_interval_ms = 15000
+
+# Production-like SLOs
+[pipelines.health]
+latency_slo_ms = 100
+error_budget = 0.001
+
+[pipelines.log]
+latency_slo_ms = 50
+error_budget = 0.005
+
+[pipelines.remediation]
+latency_slo_ms = 500
+error_budget = 0.0001
+
+# Wire configuration (production-like)
+[wires]
+default_timeout_ms = 5000
+retry_max_attempts = 3
+retry_backoff_multiplier = 2.0
+retry_initial_delay_ms = 1000
+retry_max_delay_ms = 30000
+
+[wires.circuit_breaker]
+failure_threshold = 5
+success_threshold = 3
+timeout_ms = 30000
+half_open_requests = 1
+
+# PBFT consensus (enabled for staging)
+[consensus]
+enabled = true
+n_agents = 40
+f_tolerance = 13
+quorum = 27
+default_timeout_ms = 5000
+
+# Production-like Hebbian learning
+[hebbian]
+ltp_rate = 0.1
+ltd_rate = 0.05
+stdp_window_ms = 100
+decay_rate = 0.001
+min_strength = 0.1
+max_strength = 1.0
+prune_after_days = 7
+pulse_interval_seconds = 300
+
+# 12D tensor (same as production)
+[tensor]
+dimensions = 12
+encoding = "float64"
+hnsw_m = 16
+hnsw_ef_construction = 200
+hnsw_ef_search = 100
+
+# Production-like escalation
+[escalation]
+l0_confidence_threshold = 0.9
+l0_max_severity = "MEDIUM"
+l0_timeout_ms = 0
+l1_confidence_threshold = 0.7
+l1_timeout_ms = 300000
+l2_timeout_ms = 1800000
+l3_quorum = 27
+
+# Balanced logging for staging
+[logging]
+level = "info"
+format = "json"
+output = "stdout"
+file = "logs/staging/maintenance_engine.log"
+rotation_max_size_mb = 100
+rotation_max_age_days = 7
+rotation_max_backups = 5
+compress_rotated = true
+
+# Staging monitoring
+[monitoring]
+metrics_port = 9090
+tracing_enabled = true
+tracing_sample_rate = 1.0        # Full sampling for debugging staging
+tracing_endpoint = "http://staging-jaeger:4317"
+
+# Full NAM compliance testing
+[nam]
+target_compliance = 0.92
+current_compliance = 0.0
+r1_self_query_enabled = true
+r2_hebbian_routing_enabled = true
+r3_dissent_capture_enabled = true
+r4_field_visualization_enabled = true
+r5_human_as_agent_enabled = true
+
+# ULTRAPLATE integration for staging
+[ultraplate]
+enabled = true
+discovery_interval_secs = 60
+
+# Staging-specific service endpoints (if different from prod)
+[ultraplate.services]
+synthex = { url = "http://staging-synthex:8090", priority = 1 }
+sank7 = { url = "http://staging-sank7:8100", priority = 1 }
+nais = { url = "http://staging-nais:8101", priority = 2 }
+codesynthor = { url = "http://staging-codesynthor:8110", priority = 2 }
+devops_engine = { url = "http://staging-devops:8081", priority = 2 }
+
+# Staging state settings
+[state]
+auto_save_interval_secs = 120
+directory = "data/staging/state"
+
+# Production-like security with some relaxation for testing
+[security]
+rate_limit_enabled = true
+rate_limit_requests_per_sec = 200  # Higher limit for load testing
+rate_limit_burst = 400
+cors_enabled = true
+cors_origins = [
+    "http://localhost:3000",
+    "http://staging.example.com",
+    "https://staging.example.com"
+]

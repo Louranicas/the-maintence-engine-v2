@@ -1,0 +1,289 @@
+# =============================================================================
+# The Maintenance Engine - Hebbian STDP Learning Configuration
+# =============================================================================
+# Configuration for STDP learning, homeostatic regulation, and pathway management
+# ULTRAPLATE Standard: LTP=0.1, LTD=0.05
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# STDP (Spike-Timing Dependent Plasticity)
+# -----------------------------------------------------------------------------
+[stdp]
+# Core STDP parameters (ULTRAPLATE Standard)
+# LTP (Long-Term Potentiation): Strengthening when pre fires before post
+# LTD (Long-Term Depression): Weakening when post fires before pre
+ltp_rate = 0.1                      # A+: LTP amplitude (ULTRAPLATE standard)
+ltd_rate = 0.05                     # A-: LTD amplitude (ULTRAPLATE standard)
+
+# Timing windows (milliseconds)
+# STDP function: dw = A+ * exp(-dt/tau+) for dt > 0
+#                dw = -A- * exp(dt/tau-) for dt < 0
+tau_ltp = 20.0                      # tau+: LTP time constant
+tau_ltd = 40.0                      # tau-: LTD time constant (often tau- > tau+)
+stdp_window_ms = 100                # Maximum time difference considered
+
+# Learning bounds
+weight_min = 0.0                    # Minimum synaptic weight
+weight_max = 1.0                    # Maximum synaptic weight
+weight_init_mean = 0.5              # Initial weight mean
+weight_init_std = 0.1               # Initial weight standard deviation
+
+# STDP variants
+[stdp.variant]
+type = "multiplicative"             # additive, multiplicative, log
+# Additive: dw = +/-A
+# Multiplicative: dw = A * w * (1-w) (soft bounds)
+# Log: dw = A * log(1 + alpha * w)
+
+# Metaplasticity (BCM-like sliding threshold)
+[stdp.metaplasticity]
+enabled = true
+threshold_adaptation_rate = 0.001
+threshold_min = 0.2
+threshold_max = 0.8
+initial_threshold = 0.5
+
+# Weight decay (forgetting)
+[stdp.decay]
+enabled = true
+decay_rate = 0.001                  # Per-step decay factor (from default.toml)
+decay_type = "exponential"          # linear, exponential
+prune_after_days = 7                # From default.toml
+
+# Health metrics
+[stdp.health]
+healthy_ratio_min = 2.0             # Minimum LTP:LTD ratio
+healthy_ratio_max = 4.0             # Maximum LTP:LTD ratio
+ratio_window = 1000                 # Events to average for ratio
+
+# Alerts
+alert_on_imbalance = true
+imbalance_threshold = 0.5           # Deviation from healthy range
+
+# -----------------------------------------------------------------------------
+# Homeostatic Regulation
+# -----------------------------------------------------------------------------
+[homeostatic]
+# Target setpoints (attractors)
+[homeostatic.targets]
+relevance = 0.85                    # Target relevance score
+coherence = 0.90                    # Target coherence (NAM compliance)
+synergy = 0.93                      # Target cross-service synergy (ULTRAPLATE)
+activity = 0.5                      # Target neural activity level
+ltp_ltd_ratio = 3.0                 # Target LTP:LTD ratio
+
+# Adaptation rates
+[homeostatic.rates]
+base_rate = 0.01                    # Base adaptation rate
+relevance_rate = 0.01
+coherence_rate = 0.005              # Slower for stability
+synergy_rate = 0.01
+activity_rate = 0.02
+ratio_rate = 0.005
+
+# Stability detection
+[homeostatic.stability]
+threshold = 0.05                    # Deviation from target to be "stable"
+window = 100                        # Steps to assess stability
+required_stable_steps = 50          # Steps within threshold for "stable" status
+
+# Feedback mechanisms
+[homeostatic.feedback]
+# Intrinsic plasticity (excitability adjustment)
+intrinsic_plasticity_enabled = true
+excitability_rate = 0.001
+
+# Synaptic scaling (global weight normalization)
+synaptic_scaling_enabled = true
+scaling_rate = 0.0001
+scaling_type = "multiplicative"     # additive, multiplicative
+
+# Structural plasticity (pathway creation/pruning)
+structural_plasticity_enabled = true
+creation_threshold = 0.9            # Create new pathways when synergy > threshold
+pruning_threshold = 0.01            # Prune pathways with strength < threshold
+
+# Emergency responses
+[homeostatic.emergency]
+enabled = true
+# Runaway LTP (over-excitation)
+ltp_runaway_threshold = 10.0        # LTP:LTD ratio indicating runaway
+ltp_runaway_response = "increase_ltd"  # increase_ltd, global_depression
+# Runaway LTD (over-depression)
+ltd_runaway_threshold = 0.5         # LTP:LTD ratio indicating runaway
+ltd_runaway_response = "increase_ltp"
+# Response strength
+emergency_rate_multiplier = 10.0
+
+# -----------------------------------------------------------------------------
+# Pathway Management
+# -----------------------------------------------------------------------------
+[pathways]
+# Storage
+max_pathways = 10000                # Maximum stored pathways
+storage_backend = "sqlite"          # sqlite, memory, rocksdb
+
+# Pathway structure
+[pathways.structure]
+# A pathway connects: source -> target with strength
+max_pathway_length = 10             # Maximum hops in a pathway chain
+allow_cycles = false                # Allow cyclic pathways
+bidirectional = false               # Create reverse pathway automatically
+
+# Strength management
+[pathways.strength]
+initial_strength = 0.5
+min_strength = 0.1                  # Below this, pathway is pruned (from default.toml)
+max_strength = 1.0
+decay_rate = 0.001                  # Daily decay for unused pathways
+boost_factor = 1.5                  # Strength multiplier on reactivation
+
+# Pruning
+[pathways.pruning]
+enabled = true
+interval_secs = 3600                # Run pruning every hour
+strength_threshold = 0.1            # From default.toml
+age_threshold_days = 7              # From default.toml (prune_after_days)
+max_prune_per_run = 1000            # Limit pruning batch size
+
+# Consolidation (merge similar pathways)
+[pathways.consolidation]
+enabled = true
+similarity_threshold = 0.95
+interval_secs = 86400               # Daily consolidation
+
+# Query optimization
+[pathways.query]
+cache_enabled = true
+cache_size = 1000
+index_enabled = true
+index_fields = ["source", "target", "strength"]
+
+# Analytics
+[pathways.analytics]
+track_activations = true
+track_strength_history = true
+history_resolution = "hourly"       # minutely, hourly, daily
+
+# -----------------------------------------------------------------------------
+# Service-Specific Learning
+# -----------------------------------------------------------------------------
+[service_learning]
+# Enable service-specific learning adjustments
+enabled = true
+
+# Per-tier learning rate multipliers
+[service_learning.tier_multipliers]
+tier1 = 1.5                         # SYNTHEX, SAN-K7 - learn faster
+tier2 = 1.3                         # NAIS, CodeSynthor, DevOps
+tier3 = 1.2                         # Tool Library, Library Agent, CCM
+tier4 = 1.1                         # Prometheus Swarm, Architect
+tier5 = 1.0                         # Bash Engine, Tool Maker
+
+# Critical service pathways (protected from decay)
+[service_learning.critical_pathways]
+protected_sources = ["synthex", "sank7"]
+protected_targets = ["maintenance-engine"]
+decay_multiplier = 0.1              # 10x slower decay
+
+# -----------------------------------------------------------------------------
+# Integration with Other Systems
+# -----------------------------------------------------------------------------
+[integration]
+# Pipeline integration
+[integration.pipelines]
+# Health pipeline affects learning
+health_to_learning = true
+health_threshold = 0.9              # Below this, reduce learning rate
+health_learning_reduction = 0.5     # 50% learning rate when unhealthy
+
+# Remediation pipeline creates learning events
+remediation_ltp = true              # Successful remediation -> LTP
+remediation_ltd = true              # Failed remediation -> LTD
+remediation_learning_rate = 0.05
+
+# Tensor integration
+[integration.tensor]
+# Use tensor similarity for pathway initialization
+tensor_similarity_init = true
+similarity_to_strength_factor = 0.5
+
+# 12D tensor affects learning
+tensor_health_dimension = 6         # D6: health
+tensor_synergy_dimension = 8        # D8: synergy
+
+# Consensus integration
+[integration.consensus]
+# PBFT consensus outcomes affect learning
+consensus_success_ltp = true
+consensus_failure_ltd = true
+consensus_learning_rate = 0.02
+
+# Quorum-weighted learning (more agents agree = stronger learning)
+quorum_weighted = true
+quorum_weight_factor = 0.1
+
+# NAM compliance integration
+[integration.nam]
+# R2: Hebbian routing feedback
+r2_enabled = true
+r2_feedback_strength = 0.05
+
+# R3: Dissent capture affects LTD
+r3_enabled = true
+dissent_ltd_rate = 0.02
+
+# -----------------------------------------------------------------------------
+# Pulse Configuration
+# -----------------------------------------------------------------------------
+[pulse]
+# Hebbian pulse interval (from default.toml)
+interval_seconds = 300              # 5 minutes
+
+# Pulse actions
+update_pathways = true
+prune_weak_pathways = true
+consolidate_similar = true
+compute_homeostatic = true
+
+# Pulse metrics
+track_pulse_metrics = true
+metrics_retention_days = 30
+
+# -----------------------------------------------------------------------------
+# Persistence Configuration
+# -----------------------------------------------------------------------------
+[persistence]
+# What to persist
+persist_pathways = true
+persist_stdp_state = true
+persist_homeostatic_state = true
+persist_metrics = true
+
+# How often
+save_interval_secs = 300            # 5 minutes
+checkpoint_interval_secs = 3600     # 1 hour
+
+# Where
+pathways_db = "data/hebbian_pulse.db"
+state_file = "data/state/learning_state.json"
+metrics_file = "data/learning_metrics.jsonl"
+
+# Compression
+compress_checkpoints = true
+
+# -----------------------------------------------------------------------------
+# Development/Debug Settings
+# -----------------------------------------------------------------------------
+[debug]
+# Verbose logging
+verbose_learning = false
+log_every_n_events = 100
+
+# Visualization
+visualize_pathways = false
+pathway_graph_file = "data/debug/pathway_graph.json"
+
+# Simulation mode (for testing)
+simulation_mode = false
+simulation_speed = 10.0             # 10x faster simulation

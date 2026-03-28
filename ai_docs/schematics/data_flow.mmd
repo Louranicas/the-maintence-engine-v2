@@ -1,0 +1,57 @@
+graph LR
+    subgraph SENSORS["Sensors"]
+        HL[Health Checks]
+        MT[Metrics]
+        LG[Logs]
+        EV[Events]
+    end
+
+    subgraph PIPELINE["8 Core Pipelines"]
+        PH["PL-HEALTH-001\nP1, SLO 100ms"]
+        PL["PL-LOG-001\nP2, SLO 50ms"]
+        PR["PL-REMEDIATE-001\nP1, SLO 500ms"]
+        PN["PL-HEBBIAN-001\nP2, SLO 100ms"]
+        PC["PL-CONSENSUS-001\nP1, SLO 5s"]
+        PT["PL-TENSOR-001\nP3, SLO 10ms"]
+        PD["PL-DISCOVERY-001\nP2, SLO 1s"]
+        PM["PL-METRICS-001\nP3, SLO 200ms"]
+    end
+
+    subgraph DECISION["Decision Engine"]
+        CONF[M15 Confidence Calculator]
+        ESC["Escalation Tiers\nL0-L3"]
+        ACT[M16 Action Executor]
+    end
+
+    subgraph OUTCOMES["Outcomes"]
+        REM[M14 Remediation]
+        LEARN[M25 Hebbian Learning]
+        CONS[M31 PBFT Consensus]
+        ADAPT[N06 Morphogenic Adapt]
+    end
+
+    HL --> PH
+    MT --> PM
+    LG --> PL
+    EV --> PD
+
+    PH --> CONF
+    PR --> CONF
+    CONF --> ESC
+    ESC -->|L0 auto| ACT
+    ESC -->|L1 notify| ACT
+    ESC -->|L2 approval| ACT
+    ESC -->|L3 PBFT| CONS
+
+    ACT --> REM
+    ACT --> LEARN
+    CONS --> REM
+    REM --> ADAPT
+
+    PN --> LEARN
+    PT --> ADAPT
+
+    style SENSORS fill:#0d3b66,color:#fff
+    style PIPELINE fill:#1a3a4a,color:#fff
+    style DECISION fill:#4a2a0a,color:#fff
+    style OUTCOMES fill:#2d3a16,color:#fff

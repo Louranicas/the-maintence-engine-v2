@@ -1,0 +1,298 @@
+# =============================================================================
+# The Maintenance Engine - 12D Tensor Encoding Configuration
+# =============================================================================
+# Configuration for 12-dimensional tensor encoding of service state
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Tensor Dimensions (12D)
+# -----------------------------------------------------------------------------
+# D0:  service_id      - Unique service identifier (hashed to float)
+# D1:  port            - Service port number (normalized)
+# D2:  tier            - Service tier (1-5, normalized to 0-1)
+# D3:  deps            - Dependency count (log-scaled)
+# D4:  agents          - Agent count (log-scaled)
+# D5:  protocol        - Protocol type (categorical encoding)
+# D6:  health          - Health score (0.0-1.0)
+# D7:  uptime          - Uptime ratio (0.0-1.0)
+# D8:  synergy         - Synergy score (0.0-1.0)
+# D9:  latency         - Latency (inverse normalized)
+# D10: error_rate      - Error rate (inverse, 0.0-1.0)
+# D11: temporal        - Temporal context (cyclic encoding)
+
+[tensor]
+# Core configuration
+dimensions = 12
+encoding = "float64"                # float32, float64
+normalization = "minmax"            # minmax, zscore, none
+
+# Tensor bounds
+[tensor.bounds]
+min_value = 0.0
+max_value = 1.0
+clamp_outliers = true
+
+# -----------------------------------------------------------------------------
+# Dimension-Specific Configuration
+# -----------------------------------------------------------------------------
+
+[dimensions.d0_service_id]
+name = "service_id"
+description = "Unique service identifier"
+encoding = "hash"                   # hash, categorical, direct
+hash_algorithm = "xxhash"           # xxhash, fnv, siphash
+normalize = true
+
+[dimensions.d1_port]
+name = "port"
+description = "Service port number"
+encoding = "linear"
+min_raw = 1024
+max_raw = 65535
+normalize = true
+
+[dimensions.d2_tier]
+name = "tier"
+description = "Service tier (1=highest, 5=lowest)"
+encoding = "linear"
+min_raw = 1
+max_raw = 5
+invert = true                       # Higher tier = lower value
+
+[dimensions.d3_deps]
+name = "deps"
+description = "Dependency count"
+encoding = "log"                    # Logarithmic scaling
+max_raw = 100
+base = 10
+
+[dimensions.d4_agents]
+name = "agents"
+description = "Agent count"
+encoding = "log"
+max_raw = 40                        # PBFT n=40
+base = 10
+
+[dimensions.d5_protocol]
+name = "protocol"
+description = "Protocol type"
+encoding = "categorical"
+categories = ["http", "grpc", "websocket", "unix_socket", "tcp"]
+default = "http"
+
+[dimensions.d6_health]
+name = "health"
+description = "Health score"
+encoding = "direct"                 # Already 0-1
+weight = 1.5                        # Higher weight in similarity
+
+[dimensions.d7_uptime]
+name = "uptime"
+description = "Uptime ratio"
+encoding = "direct"
+weight = 1.2
+
+[dimensions.d8_synergy]
+name = "synergy"
+description = "Cross-service synergy score"
+encoding = "direct"
+weight = 1.3
+
+[dimensions.d9_latency]
+name = "latency"
+description = "Response latency"
+encoding = "inverse"                # Lower is better
+max_raw = 10000                     # 10s max
+unit = "ms"
+weight = 1.1
+
+[dimensions.d10_error_rate]
+name = "error_rate"
+description = "Error rate"
+encoding = "inverse"                # Lower is better
+max_raw = 1.0
+weight = 1.4                        # High weight - errors are important
+
+[dimensions.d11_temporal]
+name = "temporal"
+description = "Temporal context"
+encoding = "cyclic"                 # Time of day, day of week
+components = ["hour", "day_of_week"]
+
+# -----------------------------------------------------------------------------
+# HNSW Index Configuration
+# -----------------------------------------------------------------------------
+[hnsw]
+# Index parameters
+m = 16                              # Number of connections per element
+ef_construction = 200               # Size of dynamic candidate list for construction
+ef_search = 100                     # Size of dynamic candidate list for search
+
+# Performance tuning
+max_elements = 1000000              # Maximum number of elements
+seed = 42                           # Random seed for reproducibility
+
+# Distance metric
+distance_metric = "cosine"          # cosine, euclidean, dot_product
+
+# Multi-threading
+num_threads = 0                     # 0 = auto-detect
+
+# Index persistence
+persist_index = true
+index_path = "data/tensor_index.hnsw"
+save_interval_secs = 3600           # Hourly saves
+
+# -----------------------------------------------------------------------------
+# Similarity Search
+# -----------------------------------------------------------------------------
+[similarity]
+# Default search parameters
+default_k = 10                      # Number of nearest neighbors
+min_similarity = 0.5                # Minimum similarity threshold
+
+# Weighted similarity (uses dimension weights)
+use_weighted_similarity = true
+
+# Similarity thresholds
+[similarity.thresholds]
+identical = 0.99                    # Nearly identical services
+high = 0.90                         # Highly similar
+medium = 0.75                       # Moderately similar
+low = 0.50                          # Somewhat similar
+
+# -----------------------------------------------------------------------------
+# Tensor Operations
+# -----------------------------------------------------------------------------
+[operations]
+# Batch operations
+batch_size = 1000
+parallel_encoding = true
+
+# Caching
+cache_enabled = true
+cache_size = 10000                  # Number of cached tensors
+cache_ttl_secs = 300
+
+# Compression (for storage)
+compress_stored = true
+compression_algorithm = "lz4"       # lz4, zstd, none
+
+# -----------------------------------------------------------------------------
+# 12 ULTRAPLATE Service Tensor Templates
+# -----------------------------------------------------------------------------
+[templates]
+
+[templates.tier1]
+# SYNTHEX, SAN-K7 (Tier 1, Weight 1.5)
+tier = 1
+weight = 1.5
+expected_health = 0.95
+expected_synergy = 0.93
+max_latency_ms = 100
+max_error_rate = 0.001
+
+[templates.tier2]
+# NAIS, CodeSynthor, DevOps Engine (Tier 2, Weight 1.3)
+tier = 2
+weight = 1.3
+expected_health = 0.90
+expected_synergy = 0.90
+max_latency_ms = 500
+max_error_rate = 0.005
+
+[templates.tier3]
+# Tool Library, Library Agent, CCM (Tier 3, Weight 1.2)
+tier = 3
+weight = 1.2
+expected_health = 0.85
+expected_synergy = 0.85
+max_latency_ms = 1000
+max_error_rate = 0.01
+
+[templates.tier4]
+# Prometheus Swarm, Architect Agent (Tier 4, Weight 1.1)
+tier = 4
+weight = 1.1
+expected_health = 0.85
+expected_synergy = 0.85
+max_latency_ms = 5000
+max_error_rate = 0.01
+
+[templates.tier5]
+# Bash Engine, Tool Maker (Tier 5, Weight 1.0)
+tier = 5
+weight = 1.0
+expected_health = 0.80
+expected_synergy = 0.80
+max_latency_ms = 10000
+max_error_rate = 0.02
+
+# -----------------------------------------------------------------------------
+# Anomaly Detection
+# -----------------------------------------------------------------------------
+[anomaly]
+# Tensor-based anomaly detection
+enabled = true
+
+# Detection method
+method = "isolation_forest"         # isolation_forest, autoencoder, statistical
+
+# Thresholds
+anomaly_score_threshold = 0.8       # Above this is anomaly
+warning_threshold = 0.6             # Above this is warning
+
+# Training
+training_samples = 10000
+retrain_interval_hours = 24
+
+# Per-dimension anomaly thresholds
+[anomaly.dimension_thresholds]
+health = { min = 0.5, max = 1.0 }
+error_rate = { min = 0.0, max = 0.1 }
+latency = { min = 0.0, max = 0.9 }  # Normalized, so 0.9 = high latency
+synergy = { min = 0.7, max = 1.0 }
+
+# -----------------------------------------------------------------------------
+# Visualization
+# -----------------------------------------------------------------------------
+[visualization]
+# Dimension reduction for visualization
+reduction_method = "pca"            # pca, tsne, umap
+target_dimensions = 2               # For 2D plots
+
+# Export format
+export_format = "json"              # json, csv, parquet
+
+# Color mapping
+[visualization.colors]
+healthy = "#00ff00"
+warning = "#ffff00"
+critical = "#ff0000"
+unknown = "#808080"
+
+# -----------------------------------------------------------------------------
+# Integration with Other Systems
+# -----------------------------------------------------------------------------
+[integration]
+# Export to external systems
+[integration.prometheus]
+enabled = true
+metric_prefix = "maintenance_engine_tensor"
+labels = ["service_id", "tier", "health_status"]
+
+[integration.grafana]
+enabled = true
+dashboard_uid = "tensor-overview"
+
+# Hebbian learning integration
+[integration.hebbian]
+# Use tensor similarity for pathway strength
+similarity_to_strength = true
+strength_scaling_factor = 0.1
+
+# PBFT integration
+[integration.pbft]
+# Include tensor state in consensus proposals
+include_tensor_state = true
+tensor_hash_algorithm = "sha256"

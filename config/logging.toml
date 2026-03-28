@@ -1,0 +1,310 @@
+# =============================================================================
+# The Maintenance Engine - Logging Configuration
+# =============================================================================
+# Structured logging configuration for 36 modules across 6 layers
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Global Settings
+# -----------------------------------------------------------------------------
+[global]
+# Default log level: trace, debug, info, warn, error
+level = "info"
+
+# Log format: json, pretty, compact
+format = "json"
+
+# Include timestamps
+timestamps = true
+timestamp_format = "rfc3339"        # rfc3339, rfc2822, unix, custom
+
+# Include source location (file:line)
+include_location = true
+
+# Include thread/task info
+include_thread = true
+include_span = true                 # Include tracing spans
+
+# -----------------------------------------------------------------------------
+# Output Targets
+# -----------------------------------------------------------------------------
+[outputs]
+
+# Console output
+[outputs.console]
+enabled = true
+target = "stdout"                   # stdout, stderr
+level = "info"
+format = "pretty"                   # Override format for console
+color = true                        # Enable ANSI colors
+
+# File output
+[outputs.file]
+enabled = true
+path = "logs/maintenance_engine.log"
+level = "debug"
+format = "json"
+
+# Rotation settings
+rotation = "daily"                  # daily, hourly, size
+max_size_mb = 100                   # For size-based rotation
+max_files = 10                      # Keep last N files
+compress = true                     # Compress rotated files
+
+# Error-specific log file
+[outputs.error_file]
+enabled = true
+path = "logs/maintenance_engine_errors.log"
+level = "error"                     # Only errors and above
+format = "json"
+rotation = "daily"
+max_files = 30                      # Keep 30 days of errors
+
+# Pipeline-specific log file
+[outputs.pipelines]
+enabled = true
+path = "logs/pipelines.jsonl"
+level = "info"
+format = "json"
+# Only log pipeline events
+filter_categories = ["Pipeline", "Health", "Remediation", "Consensus"]
+
+# Hebbian learning log file
+[outputs.hebbian]
+enabled = true
+path = "logs/hebbian.jsonl"
+level = "info"
+format = "json"
+filter_categories = ["Hebbian", "STDP", "Learning", "Pathway"]
+
+# -----------------------------------------------------------------------------
+# Module-Specific Levels (36 Modules / 6 Layers)
+# -----------------------------------------------------------------------------
+[modules]
+# Core framework
+maintenance_engine = "info"
+
+# Layer L01: Core Foundation (M1-M6)
+"maintenance_engine::core" = "info"
+"maintenance_engine::core::error" = "warn"
+"maintenance_engine::core::config" = "info"
+"maintenance_engine::core::types" = "debug"
+"maintenance_engine::core::engine" = "info"
+"maintenance_engine::core::api" = "info"
+
+# Layer L02: Health Monitoring (M7-M12)
+"maintenance_engine::health" = "info"
+"maintenance_engine::health::checker" = "info"
+"maintenance_engine::health::aggregator" = "info"
+"maintenance_engine::health::alerts" = "warn"
+"maintenance_engine::health::slo" = "info"
+"maintenance_engine::health::metrics" = "debug"
+
+# Layer L03: Log Processing (M13-M18)
+"maintenance_engine::logging" = "info"
+"maintenance_engine::logging::collector" = "info"
+"maintenance_engine::logging::parser" = "debug"
+"maintenance_engine::logging::aggregator" = "info"
+"maintenance_engine::logging::analyzer" = "info"
+"maintenance_engine::logging::exporter" = "info"
+
+# Layer L04: Remediation Engine (M19-M24)
+"maintenance_engine::remediation" = "info"
+"maintenance_engine::remediation::detector" = "info"
+"maintenance_engine::remediation::analyzer" = "info"
+"maintenance_engine::remediation::planner" = "info"
+"maintenance_engine::remediation::executor" = "warn"    # Log all executions at warn
+"maintenance_engine::remediation::validator" = "info"
+
+# Layer L05: Neural Learning (M25-M30)
+"maintenance_engine::learning" = "info"
+"maintenance_engine::learning::hebbian" = "info"
+"maintenance_engine::learning::stdp" = "info"
+"maintenance_engine::learning::pathways" = "debug"
+"maintenance_engine::learning::homeostatic" = "info"
+"maintenance_engine::learning::memory" = "debug"
+
+# Layer L06: Consensus & Coordination (M31-M36)
+"maintenance_engine::consensus" = "info"
+"maintenance_engine::consensus::pbft" = "info"
+"maintenance_engine::consensus::voting" = "info"
+"maintenance_engine::consensus::agents" = "debug"
+"maintenance_engine::consensus::quorum" = "warn"       # Log quorum issues at warn
+"maintenance_engine::consensus::escalation" = "info"
+
+# Pipeline-specific logging
+"maintenance_engine::pipelines" = "info"
+"maintenance_engine::pipelines::health" = "info"
+"maintenance_engine::pipelines::log" = "info"
+"maintenance_engine::pipelines::remediation" = "info"
+"maintenance_engine::pipelines::hebbian" = "info"
+"maintenance_engine::pipelines::consensus" = "info"
+"maintenance_engine::pipelines::tensor" = "debug"
+"maintenance_engine::pipelines::discovery" = "info"
+"maintenance_engine::pipelines::metrics" = "debug"
+
+# Wire & circuit breaker logging
+"maintenance_engine::wires" = "info"
+"maintenance_engine::wires::circuit_breaker" = "warn"
+
+# Tensor encoding logging
+"maintenance_engine::tensor" = "info"
+"maintenance_engine::tensor::encoding" = "debug"
+"maintenance_engine::tensor::hnsw" = "debug"
+
+# NAM compliance logging
+"maintenance_engine::nam" = "info"
+"maintenance_engine::nam::compliance" = "info"
+"maintenance_engine::nam::human_agent" = "info"
+
+# External dependencies
+tower_http = "debug"
+hyper = "warn"
+tokio = "warn"
+sqlx = "warn"
+tracing = "warn"
+tonic = "info"                      # gRPC
+
+# -----------------------------------------------------------------------------
+# Structured Logging Fields
+# -----------------------------------------------------------------------------
+[fields]
+# Always include these fields
+always_include = [
+    "service_name",
+    "version",
+    "environment",
+    "module_id",
+    "layer_id"
+]
+
+# Service identification
+[fields.static]
+service_name = "maintenance-engine"
+version = "1.0.0"
+environment = "development"         # Override per environment
+
+# Dynamic fields (computed at runtime)
+[fields.dynamic]
+request_id = true
+trace_id = true
+span_id = true
+pipeline_id = true
+service_id = true
+
+# -----------------------------------------------------------------------------
+# Filtering
+# -----------------------------------------------------------------------------
+[filters]
+# Suppress noisy logs
+suppress = [
+    { module = "hyper::proto", level = "trace" },
+    { module = "tokio::runtime", level = "trace" },
+    { message_contains = "health check passed", level = "debug" },
+    { message_contains = "tensor step", level = "trace" }
+]
+
+# Highlight important logs
+highlight = [
+    { module = "maintenance_engine::wires::circuit_breaker", when = "state_change" },
+    { module = "maintenance_engine::learning::homeostatic", when = "emergency" },
+    { module = "maintenance_engine::consensus::pbft", when = "quorum_reached" },
+    { module = "maintenance_engine::remediation::executor", when = "action_executed" }
+]
+
+# Rate limiting for noisy logs
+[filters.rate_limit]
+enabled = true
+default_interval_secs = 1           # Minimum interval between identical logs
+rules = [
+    { pattern = "health check passed", interval_secs = 60 },
+    { pattern = "tensor encoding complete", interval_secs = 10 },
+    { pattern = "hebbian pulse", interval_secs = 60 },
+    { pattern = "synergy update", interval_secs = 30 }
+]
+
+# -----------------------------------------------------------------------------
+# Sensitive Data Handling
+# -----------------------------------------------------------------------------
+[redaction]
+enabled = true
+
+# Fields to redact
+redact_fields = [
+    "password",
+    "token",
+    "api_key",
+    "secret",
+    "credential",
+    "auth_header"
+]
+
+# Redaction strategy: mask, hash, remove
+strategy = "mask"
+mask_char = "*"
+mask_length = 8                     # Show first/last N chars
+
+# -----------------------------------------------------------------------------
+# Performance Logging
+# -----------------------------------------------------------------------------
+[performance]
+# Log slow operations
+slow_operation_threshold_ms = 1000
+log_slow_queries = true
+slow_query_threshold_ms = 100
+
+# Log slow pipeline steps
+log_slow_pipelines = true
+slow_pipeline_threshold_ms = 500
+
+# Memory usage logging
+log_memory_usage = true
+memory_log_interval_secs = 60
+
+# -----------------------------------------------------------------------------
+# Error Tracking
+# -----------------------------------------------------------------------------
+[errors]
+# Include stack traces
+include_backtrace = true
+backtrace_level = "error"           # trace, debug, info, warn, error
+
+# Error aggregation
+aggregate_similar = true
+aggregation_window_secs = 60
+
+# Error alerting thresholds
+alert_threshold = 10                # Errors per minute
+alert_window_secs = 60
+
+# Escalation-specific error tracking
+[errors.escalation]
+l0_error_threshold = 5
+l1_error_threshold = 10
+l2_error_threshold = 20
+l3_error_threshold = 50             # Triggers PBFT consensus review
+
+# -----------------------------------------------------------------------------
+# Development Overrides
+# -----------------------------------------------------------------------------
+[profiles.development]
+global_level = "debug"
+console_format = "pretty"
+console_color = true
+include_location = true
+file_enabled = true
+
+[profiles.staging]
+global_level = "info"
+console_format = "json"
+console_color = false
+include_location = true
+file_enabled = true
+
+[profiles.production]
+global_level = "warn"
+console_enabled = false
+file_format = "json"
+include_location = false            # Reduce log size
+file_enabled = true
+compress = true

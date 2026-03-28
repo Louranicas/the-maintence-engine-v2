@@ -1,0 +1,304 @@
+# =============================================================================
+# The Maintenance Engine - Database Configuration
+# =============================================================================
+# SQLite configuration for 9 tracking databases
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Global Connection Settings
+# -----------------------------------------------------------------------------
+[connection]
+# Base path for all databases
+base_path = "data"
+
+# Default connection pool settings
+max_connections = 10
+min_connections = 2
+connection_timeout_secs = 30
+idle_timeout_secs = 600
+max_lifetime_secs = 1800
+
+# SQLite-specific settings
+[connection.sqlite]
+# Journal mode (WAL recommended for concurrency)
+journal_mode = "wal"                # delete, truncate, persist, memory, wal, off
+
+# Synchronous mode
+synchronous = "normal"              # off, normal, full, extra
+
+# Cache size (negative = KB, positive = pages)
+cache_size = -64000                 # 64MB cache
+
+# Busy timeout (milliseconds)
+busy_timeout_ms = 5000
+
+# Foreign keys enforcement
+foreign_keys = true
+
+# Auto-vacuum
+auto_vacuum = "incremental"         # none, full, incremental
+
+# -----------------------------------------------------------------------------
+# 9 Tracking Databases
+# -----------------------------------------------------------------------------
+
+# Database 1: Service Tracking (High Traffic)
+[databases.service_tracking]
+name = "Service Tracking"
+path = "${base_path}/service_tracking.db"
+description = "Service lifecycle, status, and health tracking"
+pool_size = 10                      # Higher for frequent queries
+min_connections = 3
+
+[databases.service_tracking.tables]
+service_state = { columns = ["service_id", "status", "health_score", "synergy_score", "last_seen", "metadata"] }
+service_history = { columns = ["id", "service_id", "event_type", "old_state", "new_state", "timestamp"] }
+service_dependencies = { columns = ["service_id", "depends_on", "dependency_type", "required"] }
+
+[databases.service_tracking.indexes]
+idx_service_state_status = "service_state(status)"
+idx_service_history_time = "service_history(timestamp)"
+idx_service_deps_service = "service_dependencies(service_id)"
+
+# Database 2: System Synergy
+[databases.system_synergy]
+name = "System Synergy"
+path = "${base_path}/system_synergy.db"
+description = "Cross-system integration and synergy tracking"
+pool_size = 5
+min_connections = 2
+
+[databases.system_synergy.tables]
+system_connections = { columns = ["id", "source_system", "target_system", "synergy_score", "last_interaction", "metadata"] }
+synergy_history = { columns = ["id", "connection_id", "synergy_score", "timestamp"] }
+interaction_patterns = { columns = ["id", "source", "target", "pattern_type", "frequency", "avg_latency"] }
+
+[databases.system_synergy.indexes]
+idx_synergy_score = "system_connections(synergy_score)"
+idx_synergy_history_time = "synergy_history(timestamp)"
+
+# Database 3: Hebbian Pulse
+[databases.hebbian_pulse]
+name = "Hebbian Pulse"
+path = "${base_path}/hebbian_pulse.db"
+description = "Neural pathway learning and STDP tracking"
+pool_size = 5
+min_connections = 2
+
+[databases.hebbian_pulse.tables]
+pathways = { columns = ["id", "source", "target", "strength", "activations", "ltp_count", "ltd_count", "created_at", "updated_at"] }
+pulse_events = { columns = ["id", "pathway_id", "event_type", "delta", "pre_strength", "post_strength", "timestamp"] }
+homeostatic_state = { columns = ["id", "metric_name", "target_value", "current_value", "deviation", "timestamp"] }
+
+[databases.hebbian_pulse.indexes]
+idx_pathways_strength = "pathways(strength)"
+idx_pathways_source = "pathways(source)"
+idx_pathways_target = "pathways(target)"
+idx_pulse_time = "pulse_events(timestamp)"
+
+# Database 4: Consensus Tracking
+[databases.consensus_tracking]
+name = "Consensus Tracking"
+path = "${base_path}/consensus_tracking.db"
+description = "PBFT consensus votes and decisions"
+pool_size = 3
+min_connections = 1
+
+[databases.consensus_tracking.tables]
+consensus_rounds = { columns = ["id", "round_number", "proposal_type", "proposal_hash", "status", "started_at", "completed_at"] }
+agent_votes = { columns = ["id", "round_id", "agent_id", "vote", "signature", "timestamp"] }
+consensus_decisions = { columns = ["id", "round_id", "decision", "quorum_reached", "vote_count", "timestamp"] }
+dissent_records = { columns = ["id", "round_id", "agent_id", "dissent_reason", "alternative_proposal", "timestamp"] }
+
+[databases.consensus_tracking.indexes]
+idx_rounds_status = "consensus_rounds(status)"
+idx_votes_round = "agent_votes(round_id)"
+idx_decisions_time = "consensus_decisions(timestamp)"
+
+# Database 5: Episodic Memory (NAM-06)
+[databases.episodic_memory]
+name = "Episodic Memory"
+path = "${base_path}/episodic_memory.db"
+description = "Episode recording for NAM-06 compliance"
+pool_size = 3
+min_connections = 1
+
+[databases.episodic_memory.tables]
+episodes = { columns = ["id", "episode_type", "context", "actions_taken", "outcome", "lessons_learned", "started_at", "ended_at"] }
+episode_entities = { columns = ["id", "episode_id", "entity_type", "entity_id", "role"] }
+episode_reflections = { columns = ["id", "episode_id", "reflection_type", "content", "confidence", "timestamp"] }
+
+[databases.episodic_memory.indexes]
+idx_episodes_type = "episodes(episode_type)"
+idx_episodes_time = "episodes(started_at)"
+idx_reflections_episode = "episode_reflections(episode_id)"
+
+# Database 6: Tensor Memory (High Throughput)
+[databases.tensor_memory]
+name = "Tensor Memory"
+path = "${base_path}/tensor_memory.db"
+description = "12D tensor storage and HNSW index"
+pool_size = 5
+min_connections = 2
+
+[databases.tensor_memory.tables]
+tensor_entries = { columns = ["id", "entity_type", "entity_id", "tensor_data", "created_at", "updated_at"] }
+tensor_metadata = { columns = ["id", "tensor_id", "dimension", "value", "label"] }
+tensor_history = { columns = ["id", "tensor_id", "old_tensor", "new_tensor", "change_reason", "timestamp"] }
+
+[databases.tensor_memory.indexes]
+idx_tensor_entity = "tensor_entries(entity_type, entity_id)"
+idx_tensor_time = "tensor_entries(updated_at)"
+
+# Database 7: Performance Metrics
+[databases.performance_metrics]
+name = "Performance Metrics"
+path = "${base_path}/performance_metrics.db"
+description = "Performance tracking and SLO monitoring"
+pool_size = 3
+min_connections = 1
+
+[databases.performance_metrics.tables]
+metrics = { columns = ["id", "metric_name", "metric_type", "value", "labels", "timestamp"] }
+slo_status = { columns = ["id", "slo_name", "target", "current", "budget_remaining", "period_start", "period_end"] }
+latency_histograms = { columns = ["id", "operation", "bucket", "count", "timestamp"] }
+
+[databases.performance_metrics.indexes]
+idx_metrics_name_time = "metrics(metric_name, timestamp)"
+idx_slo_name = "slo_status(slo_name)"
+
+# Database 8: Flow State
+[databases.flow_state]
+name = "Flow State"
+path = "${base_path}/flow_state.db"
+description = "Flow state transitions and pipeline state"
+pool_size = 3
+min_connections = 1
+
+[databases.flow_state.tables]
+flow_states = { columns = ["id", "flow_id", "state_name", "state_data", "entered_at", "exited_at"] }
+state_transitions = { columns = ["id", "flow_id", "from_state", "to_state", "trigger", "timestamp"] }
+pipeline_state = { columns = ["id", "pipeline_id", "current_stage", "progress", "started_at", "updated_at"] }
+
+[databases.flow_state.indexes]
+idx_flow_current = "flow_states(flow_id, exited_at)"
+idx_transitions_flow = "state_transitions(flow_id)"
+idx_pipeline_status = "pipeline_state(pipeline_id)"
+
+# Database 9: Security Events
+[databases.security_events]
+name = "Security Events"
+path = "${base_path}/security_events.db"
+description = "Security monitoring and audit trail"
+pool_size = 3
+min_connections = 1
+
+[databases.security_events.tables]
+security_events = { columns = ["id", "event_type", "severity", "source", "target", "details", "timestamp"] }
+audit_log = { columns = ["id", "actor", "action", "resource", "result", "ip_address", "timestamp"] }
+access_attempts = { columns = ["id", "source_ip", "target_endpoint", "method", "status_code", "timestamp"] }
+
+[databases.security_events.indexes]
+idx_security_severity = "security_events(severity, timestamp)"
+idx_audit_actor = "audit_log(actor, timestamp)"
+idx_access_ip = "access_attempts(source_ip, timestamp)"
+
+# -----------------------------------------------------------------------------
+# Migration Settings
+# -----------------------------------------------------------------------------
+[migrations]
+# Migrations directory
+path = "migrations/"
+
+# Auto-run migrations on startup
+auto_run = true
+
+# Migration table name
+table_name = "_migrations"
+
+# Require all migrations to succeed
+strict = true
+
+# Backup before migration
+backup_before_migrate = true
+backup_path = "data/backups/"
+
+# -----------------------------------------------------------------------------
+# Query Settings
+# -----------------------------------------------------------------------------
+[queries]
+# Query timeout
+default_timeout_ms = 5000
+
+# Query logging
+log_queries = false                 # Enable in development
+log_slow_queries = true
+slow_query_threshold_ms = 100
+
+# Query cache
+cache_enabled = true
+cache_size = 1000                   # Number of cached query results
+cache_ttl_secs = 60
+
+# Prepared statements
+use_prepared_statements = true
+
+# -----------------------------------------------------------------------------
+# Backup Settings
+# -----------------------------------------------------------------------------
+[backup]
+# Automatic backups
+enabled = true
+interval_hours = 24
+keep_count = 7                      # Keep last N backups
+
+# Backup location
+path = "data/backups/"
+
+# Compression
+compress = true
+compression_level = 6               # 1-9
+
+# Verify backups
+verify_after_backup = true
+
+# Per-database backup settings
+[backup.databases]
+service_tracking = { interval_hours = 6 }    # More frequent for critical db
+consensus_tracking = { interval_hours = 6 }  # Critical for audit
+security_events = { interval_hours = 12 }    # Security audit trail
+
+# -----------------------------------------------------------------------------
+# Maintenance
+# -----------------------------------------------------------------------------
+[maintenance]
+# Vacuum schedule
+vacuum_enabled = true
+vacuum_interval_hours = 168         # Weekly
+
+# Analyze (update statistics)
+analyze_enabled = true
+analyze_interval_hours = 24         # Daily
+
+# Integrity check
+integrity_check_enabled = true
+integrity_check_interval_hours = 168  # Weekly
+
+# Checkpoint (for WAL mode)
+checkpoint_enabled = true
+checkpoint_interval_secs = 300      # Every 5 minutes
+checkpoint_frames = 1000            # Checkpoint after N frames
+
+# -----------------------------------------------------------------------------
+# Development Settings
+# -----------------------------------------------------------------------------
+[development]
+# Use in-memory database for tests
+test_in_memory = true
+
+# Seed data
+seed_enabled = false
+seed_file = "data/seed.sql"
+
+# Reset on startup (DANGEROUS - development only)
+reset_on_startup = false

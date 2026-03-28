@@ -1,0 +1,54 @@
+graph TB
+    subgraph FIELD["Kuramoto Field - OVM"]
+        R["Order Parameter r"]
+        K["Coupling K"]
+        PSI["Wave Field Psi_theta_phi"]
+    end
+
+    subgraph NEXUS["L8 Nexus Layer"]
+        N01["N01: Field Bridge\nPre/Post r capture"]
+        N02["N02: Intent Router\n12D Tensor cosine"]
+        N03["N03: Regime Manager\nSwarm/Fleet/Armada"]
+        N04["N04: STDP Bridge\nCo-activation +0.05"]
+        N05["N05: Evolution Gate\nMutation test"]
+        N06["N06: Morphogenic Adapter\n|r_delta| > 0.05"]
+    end
+
+    subgraph LEARNING["L5 Learning"]
+        STDP[M26 STDP Processor]
+        HEB[M25 Hebbian Manager]
+        PAT[M27 Pattern Recognizer]
+    end
+
+    subgraph OBSERVER["L7 Observer"]
+        EVOL[M39 Evolution Chamber]
+        EMER[M38 Emergence Detector]
+        FIT[Fitness Evaluator]
+    end
+
+    subgraph SERVICES["L2 Services"]
+        REG[M09 Service Registry]
+        HLT[M10 Health Monitor]
+    end
+
+    R -->|coherence| N01
+    K -->|regime| N03
+    PSI -->|field state| N06
+
+    N01 -->|r_before, r_after| N06
+    N02 -->|tensor routing| REG
+    N03 -->|K regime| N04
+    N04 -->|pathway update| STDP
+    N04 -->|co-activation| HEB
+    N05 -->|mutation test| EVOL
+    N06 -->|adaptation trigger| EMER
+    N06 -->|r_delta| FIT
+
+    HLT -->|health score| N01
+    PAT -->|pattern match| N02
+
+    style FIELD fill:#2c1654,color:#fff
+    style NEXUS fill:#4a1942,color:#fff
+    style LEARNING fill:#1a3a1a,color:#fff
+    style OBSERVER fill:#3a2a0a,color:#fff
+    style SERVICES fill:#2d5016,color:#fff

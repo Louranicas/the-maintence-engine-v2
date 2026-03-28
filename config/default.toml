@@ -1,0 +1,358 @@
+# The Maintenance Engine - Default Configuration
+# Version: 1.0.0
+# See: ai_docs/INDEX.md for documentation
+
+[engine]
+id = "maintenance-engine-001"
+name = "The Maintenance Engine"
+version = "1.0.0"
+environment = "development"
+
+[server]
+host = "0.0.0.0"
+port = 8080
+grpc_port = 8081
+websocket_port = 8082
+max_connections = 1000
+request_timeout_ms = 30000
+
+[database]
+base_path = "data"
+pool_size = 10
+max_overflow = 5
+timeout_ms = 5000
+wal_mode = true
+busy_timeout_ms = 3000
+
+[database.pools.service_tracking]
+path = "${database.base_path}/service_tracking.db"
+pool_size = 10
+
+[database.pools.system_synergy]
+path = "${database.base_path}/system_synergy.db"
+pool_size = 5
+
+[database.pools.hebbian_pulse]
+path = "${database.base_path}/hebbian_pulse.db"
+pool_size = 5
+
+[database.pools.consensus_tracking]
+path = "${database.base_path}/consensus_tracking.db"
+pool_size = 3
+
+[database.pools.episodic_memory]
+path = "${database.base_path}/episodic_memory.db"
+pool_size = 3
+
+[database.pools.tensor_memory]
+path = "${database.base_path}/tensor_memory.db"
+pool_size = 5
+
+[database.pools.performance_metrics]
+path = "${database.base_path}/performance_metrics.db"
+pool_size = 3
+
+[database.pools.flow_state]
+path = "${database.base_path}/flow_state.db"
+pool_size = 3
+
+[database.pools.security_events]
+path = "${database.base_path}/security_events.db"
+pool_size = 3
+
+# Pipelines Configuration
+[pipelines]
+health_check_interval_ms = 30000
+log_batch_size = 1000
+metrics_scrape_interval_ms = 15000
+
+[pipelines.health]
+id = "PL-HEALTH-001"
+enabled = true
+priority = 1
+latency_slo_ms = 100
+throughput_target = 1000
+error_budget = 0.001
+
+[pipelines.log]
+id = "PL-LOG-001"
+enabled = true
+priority = 2
+latency_slo_ms = 50
+throughput_target = 500000
+error_budget = 0.005
+
+[pipelines.remediation]
+id = "PL-REMEDIATE-001"
+enabled = true
+priority = 1
+latency_slo_ms = 500
+throughput_target = 100
+error_budget = 0.0001
+
+[pipelines.hebbian]
+id = "PL-HEBBIAN-001"
+enabled = true
+priority = 2
+latency_slo_ms = 100
+throughput_target = 10000
+error_budget = 0.01
+
+[pipelines.consensus]
+id = "PL-CONSENSUS-001"
+enabled = true
+priority = 1
+latency_slo_ms = 5000
+throughput_target = 10
+error_budget = 0.0001
+
+[pipelines.tensor]
+id = "PL-TENSOR-001"
+enabled = true
+priority = 3
+latency_slo_ms = 10
+throughput_target = 100000
+error_budget = 0.005
+
+[pipelines.discovery]
+id = "PL-DISCOVERY-001"
+enabled = true
+priority = 2
+latency_slo_ms = 1000
+throughput_target = 100
+error_budget = 0.01
+
+[pipelines.metrics]
+id = "PL-METRICS-001"
+enabled = true
+priority = 3
+latency_slo_ms = 200
+throughput_target = 50000
+error_budget = 0.01
+
+# Wire Configuration
+[wires]
+default_timeout_ms = 5000
+retry_max_attempts = 3
+retry_backoff_multiplier = 2.0
+retry_initial_delay_ms = 1000
+retry_max_delay_ms = 30000
+
+[wires.circuit_breaker]
+failure_threshold = 5
+success_threshold = 3
+timeout_ms = 30000
+half_open_requests = 1
+
+# PBFT Consensus Configuration
+[consensus]
+enabled = true
+n_agents = 40
+f_tolerance = 13
+quorum = 27
+default_timeout_ms = 5000
+
+[consensus.actions]
+service_termination_timeout_ms = 60000
+database_migration_timeout_ms = 300000
+credential_rotation_timeout_ms = 120000
+cascade_restart_timeout_ms = 180000
+config_rollback_timeout_ms = 90000
+
+# Hebbian Learning Configuration
+[hebbian]
+ltp_rate = 0.1
+ltd_rate = 0.05
+stdp_window_ms = 100
+decay_rate = 0.001
+min_strength = 0.1
+max_strength = 1.0
+prune_after_days = 7
+pulse_interval_seconds = 300
+
+# Tensor Configuration
+[tensor]
+dimensions = 12
+encoding = "float64"
+hnsw_m = 16
+hnsw_ef_construction = 200
+hnsw_ef_search = 100
+
+# Escalation Tiers
+[escalation]
+l0_confidence_threshold = 0.9
+l0_max_severity = "MEDIUM"
+l0_timeout_ms = 0
+l1_confidence_threshold = 0.7
+l1_timeout_ms = 300000
+l2_timeout_ms = 1800000
+l3_quorum = 27
+
+# Monitoring Configuration
+[monitoring]
+metrics_port = 9090
+tracing_enabled = true
+tracing_sample_rate = 0.1
+tracing_endpoint = "http://localhost:4317"
+
+# Logging Configuration
+[logging]
+level = "info"
+format = "json"
+output = "stdout"
+file = "logs/maintenance_engine.log"
+rotation_max_size_mb = 100
+rotation_max_age_days = 7
+rotation_max_backups = 5
+compress_rotated = true
+
+# NAM Compliance
+[nam]
+target_compliance = 0.92
+current_compliance = 0.0
+r1_self_query_enabled = true
+r2_hebbian_routing_enabled = true
+r3_dissent_capture_enabled = true
+r4_field_visualization_enabled = true
+r5_human_as_agent_enabled = true
+
+[nam.human_agent]
+id = "@0.A"
+type = "human"
+tier = 0
+weight = 1.0
+participation_mode = "peer"
+
+# Service Endpoints (12 ULTRAPLATE Services)
+[[services]]
+id = "synthex"
+name = "SYNTHEX Engine"
+tier = 1
+weight = 1.5
+host = "localhost"
+port = 8090
+ws_port = 8091
+protocol = "rest"
+health_path = "/api/health"
+timeout_ms = 10000
+
+[[services]]
+id = "san-k7"
+name = "SAN-K7 Orchestrator"
+tier = 1
+weight = 1.5
+host = "localhost"
+port = 8100
+protocol = "rest"
+health_path = "/health"
+timeout_ms = 10000
+
+[[services]]
+id = "nais"
+name = "Neural Adaptive Intelligence"
+tier = 2
+weight = 1.3
+host = "localhost"
+port = 8101
+protocol = "rest"
+health_path = "/health"
+timeout_ms = 50000
+
+[[services]]
+id = "codesynthor-v7"
+name = "CodeSynthor V7"
+tier = 2
+weight = 1.3
+host = "localhost"
+port = 8110
+protocol = "rest"
+health_path = "/health"
+timeout_ms = 50000
+
+[[services]]
+id = "devops-engine"
+name = "DevOps Engine"
+tier = 2
+weight = 1.3
+host = "localhost"
+port = 8081
+protocol = "rest"
+health_path = "/health"
+timeout_ms = 50000
+
+[[services]]
+id = "tool-library"
+name = "Tool Library"
+tier = 3
+weight = 1.2
+host = "localhost"
+port = 8105
+protocol = "rest"
+health_path = "/health"
+timeout_ms = 100000
+
+[[services]]
+id = "library-agent"
+name = "Library Agent"
+tier = 3
+weight = 1.2
+host = "localhost"
+port = 8083
+protocol = "rest"
+health_path = "/health"
+timeout_ms = 100000
+
+[[services]]
+id = "ccm"
+name = "Claude Context Manager"
+tier = 3
+weight = 1.2
+host = "localhost"
+port = 8104
+protocol = "rest"
+health_path = "/health"
+timeout_ms = 100000
+
+[[services]]
+id = "prometheus-swarm"
+name = "Prometheus Swarm (CVA-NAM Fleet)"
+tier = 4
+weight = 1.1
+host = "localhost"
+port = 10001
+protocol = "rest"
+health_path = "/health"
+timeout_ms = 200000
+
+[[services]]
+id = "architect-agent"
+name = "Architect Agent"
+tier = 4
+weight = 1.1
+host = "localhost"
+port = 9001
+protocol = "rest"
+health_path = "/health"
+timeout_ms = 200000
+
+[[services]]
+id = "bash-engine"
+name = "Bash Engine"
+tier = 5
+weight = 1.0
+host = "localhost"
+port = 8102
+protocol = "rest"
+health_path = "/health"
+timeout_ms = 500000
+
+[[services]]
+id = "tool-maker"
+name = "Tool Maker"
+tier = 5
+weight = 1.0
+host = "localhost"
+port = 8103
+protocol = "rest"
+health_path = "/health"
+timeout_ms = 500000

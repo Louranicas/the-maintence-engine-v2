@@ -1,0 +1,254 @@
+# =============================================================================
+# The Maintenance Engine - Production Environment Configuration
+# =============================================================================
+# This file contains overrides for production environment.
+# Base configuration is in default.toml
+#
+# IMPORTANT: Review all settings before deploying to production.
+# =============================================================================
+
+# Production server settings (optimized for performance)
+[server]
+host = "0.0.0.0"
+port = 8080
+grpc_port = 8081
+websocket_port = 8082
+max_connections = 5000
+request_timeout_ms = 30000
+shutdown_timeout_secs = 60       # Allow time for graceful shutdown
+max_body_size = 5242880          # 5 MB limit in production
+
+# Production database (optimized pool sizes)
+[database]
+base_path = "/var/lib/maintenance-engine/data"
+pool_size = 15
+max_overflow = 10
+timeout_ms = 5000
+wal_mode = true
+busy_timeout_ms = 3000
+
+# Optimized pool sizes for production workloads
+[database.pools.service_tracking]
+path = "${database.base_path}/service_tracking.db"
+pool_size = 15                   # High traffic
+
+[database.pools.system_synergy]
+path = "${database.base_path}/system_synergy.db"
+pool_size = 8
+
+[database.pools.hebbian_pulse]
+path = "${database.base_path}/hebbian_pulse.db"
+pool_size = 8
+
+[database.pools.consensus_tracking]
+path = "${database.base_path}/consensus_tracking.db"
+pool_size = 5
+
+[database.pools.episodic_memory]
+path = "${database.base_path}/episodic_memory.db"
+pool_size = 5
+
+[database.pools.tensor_memory]
+path = "${database.base_path}/tensor_memory.db"
+pool_size = 8                    # High throughput
+
+[database.pools.performance_metrics]
+path = "${database.base_path}/performance_metrics.db"
+pool_size = 5
+
+[database.pools.flow_state]
+path = "${database.base_path}/flow_state.db"
+pool_size = 5
+
+[database.pools.security_events]
+path = "${database.base_path}/security_events.db"
+pool_size = 5
+
+# Production pipeline settings (strict SLOs)
+[pipelines]
+health_check_interval_ms = 15000     # More frequent in production
+log_batch_size = 2000                # Larger batches for efficiency
+metrics_scrape_interval_ms = 10000
+
+# Strict SLOs for production
+[pipelines.health]
+latency_slo_ms = 100
+throughput_target = 2000
+error_budget = 0.0001
+
+[pipelines.log]
+latency_slo_ms = 50
+throughput_target = 1000000
+error_budget = 0.001
+
+[pipelines.remediation]
+latency_slo_ms = 500
+throughput_target = 500
+error_budget = 0.00001              # Critical - very low error budget
+
+[pipelines.hebbian]
+latency_slo_ms = 100
+throughput_target = 20000
+error_budget = 0.005
+
+[pipelines.consensus]
+latency_slo_ms = 5000
+throughput_target = 50
+error_budget = 0.00001              # Critical
+
+[pipelines.tensor]
+latency_slo_ms = 10
+throughput_target = 200000
+error_budget = 0.001
+
+[pipelines.discovery]
+latency_slo_ms = 1000
+throughput_target = 200
+error_budget = 0.005
+
+[pipelines.metrics]
+latency_slo_ms = 200
+throughput_target = 100000
+error_budget = 0.005
+
+# Wire configuration (strict for production)
+[wires]
+default_timeout_ms = 5000
+retry_max_attempts = 2               # Fewer retries, fail fast
+retry_backoff_multiplier = 2.0
+retry_initial_delay_ms = 500
+retry_max_delay_ms = 10000
+
+[wires.circuit_breaker]
+failure_threshold = 3                # Quick circuit break
+success_threshold = 5                # More successes needed to close
+timeout_ms = 30000
+half_open_requests = 1
+
+# PBFT consensus (full configuration)
+[consensus]
+enabled = true
+n_agents = 40
+f_tolerance = 13
+quorum = 27
+default_timeout_ms = 5000
+
+[consensus.actions]
+service_termination_timeout_ms = 60000
+database_migration_timeout_ms = 300000
+credential_rotation_timeout_ms = 120000
+cascade_restart_timeout_ms = 180000
+config_rollback_timeout_ms = 90000
+
+# Production Hebbian learning (conservative rates)
+[hebbian]
+ltp_rate = 0.1
+ltd_rate = 0.05
+stdp_window_ms = 100
+decay_rate = 0.0001                  # Slower decay in production
+min_strength = 0.1
+max_strength = 1.0
+prune_after_days = 30                # Longer retention
+pulse_interval_seconds = 300
+
+# 12D tensor (production settings)
+[tensor]
+dimensions = 12
+encoding = "float64"
+hnsw_m = 24                          # Higher for better recall
+hnsw_ef_construction = 400           # Higher quality index
+hnsw_ef_search = 200                 # Better search quality
+max_entries = 10000000               # 10M entries
+
+# Production escalation (strict thresholds)
+[escalation]
+l0_confidence_threshold = 0.95       # Very high for auto-execute
+l0_max_severity = "LOW"              # Only low severity auto-execute
+l0_timeout_ms = 0
+l1_confidence_threshold = 0.8
+l1_timeout_ms = 180000               # 3 min
+l2_timeout_ms = 900000               # 15 min
+l3_quorum = 27
+
+# Production logging (minimal, structured)
+[logging]
+level = "warn"                       # Only warnings and errors
+format = "json"                      # Structured for log aggregation
+output = "file"                      # No stdout in production
+file = "/var/log/maintenance-engine/maintenance_engine.log"
+rotation_max_size_mb = 500
+rotation_max_age_days = 30
+rotation_max_backups = 30
+compress_rotated = true
+
+# Production monitoring
+[monitoring]
+metrics_port = 9090
+tracing_enabled = true
+tracing_sample_rate = 0.01           # 1% sampling in production
+tracing_endpoint = "http://jaeger:4317"
+
+# Full NAM compliance (strict)
+[nam]
+target_compliance = 0.92
+current_compliance = 0.0
+r1_self_query_enabled = true
+r2_hebbian_routing_enabled = true
+r3_dissent_capture_enabled = true
+r4_field_visualization_enabled = true
+r5_human_as_agent_enabled = true
+
+[nam.human_agent]
+id = "@0.A"
+type = "human"
+tier = 0
+weight = 1.0
+participation_mode = "peer"
+
+# Production ULTRAPLATE integration
+[ultraplate]
+enabled = true
+discovery_interval_secs = 30
+
+[ultraplate.services]
+synthex = { url = "http://synthex:8090", priority = 1 }
+sank7 = { url = "http://sank7:8100", priority = 1 }
+nais = { url = "http://nais:8101", priority = 2 }
+codesynthor = { url = "http://codesynthor:8110", priority = 2 }
+devops_engine = { url = "http://devops-engine:8081", priority = 2 }
+tool_library = { url = "http://tool-library:8105", priority = 2 }
+library_agent = { url = "http://library-agent:8083", priority = 3 }
+ccm = { url = "http://ccm:8104", priority = 3 }
+prometheus_swarm = { url = "http://prometheus-swarm:10001", priority = 1 }
+architect_agent = { url = "http://architect-agent:9001", priority = 3 }
+bash_engine = { url = "http://bash-engine:8102", priority = 4 }
+tool_maker = { url = "http://tool-maker:8103", priority = 4 }
+
+# Production state settings
+[state]
+auto_save_interval_secs = 600
+directory = "/var/lib/maintenance-engine/state"
+compress = true                      # Enable compression in production
+
+# Production security (strict)
+[security]
+rate_limit_enabled = true
+rate_limit_requests_per_sec = 100
+rate_limit_burst = 200
+max_string_length = 32768
+max_array_length = 5000
+max_object_depth = 16
+cors_enabled = true
+cors_origins = [
+    "https://app.example.com",
+    "https://admin.example.com"
+]
+cors_max_age_secs = 86400
+
+# Production quality gates
+[quality]
+unsafe_blocks = 0
+unwrap_calls = 0
+expect_calls = 0
+compiler_warnings = 0
+test_coverage_minimum = 80
