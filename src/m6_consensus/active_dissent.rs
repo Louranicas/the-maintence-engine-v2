@@ -256,7 +256,6 @@ impl ActiveDissentGenerator {
     /// Compute the base risk score for a given action type.
     ///
     /// Deterministic mapping from action type string to base risk.
-    #[allow(clippy::unused_self)]
     fn base_risk(action_type: &str) -> f64 {
         match action_type {
             "service_termination" => 0.85,
