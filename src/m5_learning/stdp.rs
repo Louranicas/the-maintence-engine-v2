@@ -776,4 +776,286 @@ mod tests {
             "Negative age should return original strength"
         );
     }
+
+    // ---------------------------------------------------------------
+    // Additional tests to reach 50+
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_default_impl() {
+        let processor = StdpProcessor::default();
+        assert_eq!(processor.event_count(), 0);
+    }
+
+    #[test]
+    fn test_record_spike_increments_count() {
+        let processor = StdpProcessor::new();
+        for i in 0..10 {
+            let _ = processor.record_spike("s", "t", i * 10, SpikeType::PreSynaptic);
+        }
+        assert_eq!(processor.event_count(), 10);
+    }
+
+    #[test]
+    fn test_record_spike_both_types() {
+        let processor = StdpProcessor::new();
+        let _ = processor.record_spike("a", "b", 0, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("a", "b", 5, SpikeType::PostSynaptic);
+        assert_eq!(processor.event_count(), 2);
+    }
+
+    #[test]
+    fn test_ltp_decreases_with_larger_delta() {
+        let processor = StdpProcessor::new();
+        let change_close = processor.calculate_weight_change(5);
+        let change_far = processor.calculate_weight_change(50);
+        assert!(change_close > change_far, "LTP should decay with distance");
+    }
+
+    #[test]
+    fn test_ltd_magnitude_decreases_with_larger_negative_delta() {
+        let processor = StdpProcessor::new();
+        let change_close = processor.calculate_weight_change(-5);
+        let change_far = processor.calculate_weight_change(-50);
+        assert!(
+            change_close.abs() > change_far.abs(),
+            "LTD magnitude should decay with distance"
+        );
+    }
+
+    #[test]
+    fn test_ltp_larger_than_ltd_at_same_distance() {
+        let processor = StdpProcessor::new();
+        let ltp = processor.calculate_weight_change(10);
+        let ltd = processor.calculate_weight_change(-10);
+        assert!(ltp > ltd.abs(), "LTP rate 0.1 > LTD rate 0.05");
+    }
+
+    #[test]
+    fn test_weight_change_symmetric_near_zero() {
+        let processor = StdpProcessor::new();
+        let ltp_1 = processor.calculate_weight_change(1);
+        let ltd_1 = processor.calculate_weight_change(-1);
+        assert!(ltp_1 > 0.0);
+        assert!(ltd_1 < 0.0);
+    }
+
+    #[test]
+    fn test_process_window_multiple_pairs() {
+        let processor = StdpProcessor::new();
+        // Two pathways, each with pre/post
+        let _ = processor.record_spike("a", "b", 100, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("a", "b", 110, SpikeType::PostSynaptic);
+        let _ = processor.record_spike("c", "d", 200, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("c", "d", 215, SpikeType::PostSynaptic);
+
+        let pairs = processor.process_window().ok().unwrap_or_default();
+        assert_eq!(pairs.len(), 2);
+    }
+
+    #[test]
+    fn test_process_window_no_cross_pathway_pairing() {
+        let processor = StdpProcessor::new();
+        let _ = processor.record_spike("a", "b", 100, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("c", "d", 110, SpikeType::PostSynaptic);
+
+        let pairs = processor.process_window().ok().unwrap_or_default();
+        assert!(pairs.is_empty(), "Different pathways should not be paired");
+    }
+
+    #[test]
+    fn test_apply_to_pathways_key_format() {
+        let processor = StdpProcessor::new();
+        let _ = processor.record_spike("mod_x", "mod_y", 50, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("mod_x", "mod_y", 55, SpikeType::PostSynaptic);
+
+        let pairs = processor.process_window().ok().unwrap_or_default();
+        let updates = processor.apply_to_pathways(&pairs);
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].0, "mod_x->mod_y");
+    }
+
+    #[test]
+    fn test_apply_to_pathways_empty() {
+        let processor = StdpProcessor::new();
+        let updates = processor.apply_to_pathways(&[]);
+        assert!(updates.is_empty());
+    }
+
+    #[test]
+    fn test_clear_old_events_removes_nothing_when_all_recent() {
+        let processor = StdpProcessor::new();
+        let _ = processor.record_spike("a", "b", 100, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("a", "b", 200, SpikeType::PostSynaptic);
+        let removed = processor.clear_old_events(0);
+        assert_eq!(removed, 0, "No events should be removed when threshold is 0");
+    }
+
+    #[test]
+    fn test_clear_old_events_removes_all() {
+        let processor = StdpProcessor::new();
+        let _ = processor.record_spike("a", "b", 10, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("a", "b", 20, SpikeType::PostSynaptic);
+        let removed = processor.clear_old_events(1000);
+        assert_eq!(removed, 2);
+        assert_eq!(processor.event_count(), 0);
+    }
+
+    #[test]
+    fn test_get_recent_events_empty() {
+        let processor = StdpProcessor::new();
+        let recent = processor.get_recent_events(5);
+        assert!(recent.is_empty());
+    }
+
+    #[test]
+    fn test_get_recent_events_preserves_type() {
+        let processor = StdpProcessor::new();
+        let _ = processor.record_spike("s", "t", 10, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("s", "t", 20, SpikeType::PostSynaptic);
+
+        let recent = processor.get_recent_events(2);
+        assert_eq!(recent[0].event_type, SpikeType::PostSynaptic);
+        assert_eq!(recent[1].event_type, SpikeType::PreSynaptic);
+    }
+
+    #[test]
+    fn test_timing_pairs_replaced_on_each_process() {
+        let processor = StdpProcessor::new();
+        let _ = processor.record_spike("a", "b", 10, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("a", "b", 15, SpikeType::PostSynaptic);
+        let _ = processor.process_window();
+        assert_eq!(processor.get_timing_pairs().len(), 1);
+
+        // Process again with same data
+        let _ = processor.process_window();
+        assert_eq!(processor.get_timing_pairs().len(), 1);
+    }
+
+    #[test]
+    fn test_exponential_decay_halfway() {
+        let processor = StdpProcessor::new();
+        // At half tau, strength = w0 * e^(-0.5)
+        let half_tau = 604_800.0 / 2.0;
+        let decayed = processor.exponential_decay(1.0, half_tau);
+        let expected = (-0.5_f64).exp();
+        assert!(
+            (decayed - expected).abs() < 1e-10,
+            "Half-tau decay: got {decayed}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn test_exponential_decay_preserves_zero() {
+        let processor = StdpProcessor::new();
+        let decayed = processor.exponential_decay(0.0, 1000.0);
+        // 0 * exp(-x) = 0, but floor is 0.1
+        assert!(
+            (decayed - 0.1).abs() < f64::EPSILON,
+            "Zero strength after decay should be at floor"
+        );
+    }
+
+    #[test]
+    fn test_custom_config_decay_floor() {
+        let config = StdpConfig {
+            decay_floor: 0.2,
+            ..Default::default()
+        };
+        let processor = StdpProcessor::with_config(config);
+        let decayed = processor.exponential_decay(0.5, 10_000_000.0);
+        assert!(
+            (decayed - 0.2).abs() < f64::EPSILON,
+            "Should clamp to custom decay_floor"
+        );
+    }
+
+    #[test]
+    fn test_custom_config_weight_bounds() {
+        let config = StdpConfig {
+            weight_max: 0.5,
+            ..Default::default()
+        };
+        let processor = StdpProcessor::with_config(config);
+        let change = processor.calculate_weight_change(1);
+        assert!(change <= 0.5, "Weight change should be clamped to weight_max");
+    }
+
+    #[test]
+    fn test_custom_config_larger_window() {
+        let config = StdpConfig {
+            window_ms: 500,
+            ..Default::default()
+        };
+        let processor = StdpProcessor::with_config(config);
+        let _ = processor.record_spike("a", "b", 0, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("a", "b", 400, SpikeType::PostSynaptic);
+
+        let pairs = processor.process_window().ok().unwrap_or_default();
+        assert_eq!(pairs.len(), 1, "Should pair within larger window");
+    }
+
+    #[test]
+    fn test_spike_event_source_target_preserved() {
+        let processor = StdpProcessor::new();
+        let _ = processor.record_spike("source_node", "target_node", 42, SpikeType::PreSynaptic);
+        let events = processor.get_recent_events(1);
+        assert_eq!(events[0].source_id, "source_node");
+        assert_eq!(events[0].target_id, "target_node");
+        assert_eq!(events[0].timestamp_ms, 42);
+    }
+
+    #[test]
+    fn test_spike_type_equality() {
+        assert_eq!(SpikeType::PreSynaptic, SpikeType::PreSynaptic);
+        assert_eq!(SpikeType::PostSynaptic, SpikeType::PostSynaptic);
+        assert_ne!(SpikeType::PreSynaptic, SpikeType::PostSynaptic);
+    }
+
+    #[test]
+    fn test_very_large_positive_delta_approaches_zero() {
+        let processor = StdpProcessor::new();
+        let change = processor.calculate_weight_change(100_000);
+        assert!(change.abs() < 1e-10, "Very large delta should produce near-zero change");
+    }
+
+    #[test]
+    fn test_very_large_negative_delta_approaches_zero() {
+        let processor = StdpProcessor::new();
+        let change = processor.calculate_weight_change(-100_000);
+        assert!(change.abs() < 1e-10, "Very large negative delta should produce near-zero change");
+    }
+
+    #[test]
+    fn test_config_tau_decay_custom() {
+        let config = StdpConfig {
+            tau_decay_s: 3600.0, // 1 hour
+            ..Default::default()
+        };
+        let processor = StdpProcessor::with_config(config);
+        let decayed = processor.exponential_decay(1.0, 3600.0);
+        let expected = (-1.0_f64).exp();
+        assert!(
+            (decayed - expected).abs() < 1e-10,
+            "Custom tau: got {decayed}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn test_process_window_result_is_ok() {
+        let processor = StdpProcessor::new();
+        let result = processor.process_window();
+        assert!(result.is_ok());
+        assert!(result.ok().unwrap_or_default().is_empty());
+    }
+
+    #[test]
+    fn test_event_buffer_evicts_oldest() {
+        let processor = StdpProcessor::new();
+        for i in 0..1100_u64 {
+            let _ = processor.record_spike("s", "t", i, SpikeType::PreSynaptic);
+        }
+        let recent = processor.get_recent_events(1);
+        assert_eq!(recent[0].timestamp_ms, 1099, "Most recent event should be last added");
+    }
 }

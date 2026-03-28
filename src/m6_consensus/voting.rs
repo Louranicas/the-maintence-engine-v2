@@ -662,4 +662,291 @@ mod tests {
 
         assert_eq!(collector.total_votes_cast(), 2);
     }
+
+    // ---------------------------------------------------------------
+    // Additional tests to reach 50+
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_default_impl() {
+        let collector = VoteCollector::default();
+        assert_eq!(collector.open_ballot_count(), 0);
+        assert_eq!(collector.total_votes_cast(), 0);
+    }
+
+    #[test]
+    fn test_close_already_closed_fails() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+        let _ = collector.close_ballot("prop-1");
+        let result = collector.close_ballot("prop-1");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vote_on_nonexistent_ballot_fails() {
+        let collector = VoteCollector::new();
+        let vote = make_vote("prop-99", "agent-01", VoteType::Approve, AgentRole::Validator, 1.0);
+        let result = collector.cast_vote("prop-99", vote);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_ballot_nonexistent_fails() {
+        let collector = VoteCollector::new();
+        let result = collector.get_ballot("prop-99");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tally_nonexistent_fails() {
+        let collector = VoteCollector::new();
+        let result = collector.get_tally("prop-99");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_has_voted_nonexistent_ballot() {
+        let collector = VoteCollector::new();
+        assert!(!collector.has_voted("nonexistent", "agent-01"));
+    }
+
+    #[test]
+    fn test_multiple_ballots() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+        let _ = collector.open_ballot("prop-2");
+        let _ = collector.open_ballot("prop-3");
+        assert_eq!(collector.open_ballot_count(), 3);
+    }
+
+    #[test]
+    fn test_ballot_status_after_open() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+        let ballot = collector.get_ballot("prop-1").unwrap_or_else(|_| unreachable!());
+        assert_eq!(ballot.status, BallotStatus::Open);
+        assert!(!ballot.quorum_reached);
+    }
+
+    #[test]
+    fn test_quorum_not_reached_below_threshold() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+
+        // Submit 10 approval votes (below quorum of 27)
+        for i in 1..=10 {
+            let vote = make_vote(
+                "prop-1",
+                &format!("agent-{i:02}"),
+                VoteType::Approve,
+                AgentRole::Validator,
+                1.0,
+            );
+            let _ = collector.cast_vote("prop-1", vote);
+        }
+
+        let tally = collector.get_tally("prop-1").unwrap_or_else(|_| unreachable!());
+        assert!(!tally.quorum_reached);
+    }
+
+    #[test]
+    fn test_tally_empty_ballot() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+        let tally = collector.get_tally("prop-1").unwrap_or_else(|_| unreachable!());
+        assert_eq!(tally.total_votes, 0);
+        assert_eq!(tally.votes_for, 0);
+        assert_eq!(tally.votes_against, 0);
+        assert_eq!(tally.votes_abstain, 0);
+        assert!((tally.participation_rate).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_votes_by_role_empty() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+        let votes = collector.get_votes_by_role("prop-1", AgentRole::Historian);
+        assert!(votes.is_empty());
+    }
+
+    #[test]
+    fn test_votes_by_role_nonexistent_ballot() {
+        let collector = VoteCollector::new();
+        let votes = collector.get_votes_by_role("nonexistent", AgentRole::Validator);
+        assert!(votes.is_empty());
+    }
+
+    #[test]
+    fn test_dissenting_votes_empty() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+        let v1 = make_vote("prop-1", "agent-01", VoteType::Approve, AgentRole::Validator, 1.0);
+        let _ = collector.cast_vote("prop-1", v1);
+        let dissenting = collector.get_dissenting_votes("prop-1");
+        assert!(dissenting.is_empty());
+    }
+
+    #[test]
+    fn test_dissenting_votes_nonexistent_ballot() {
+        let collector = VoteCollector::new();
+        let votes = collector.get_dissenting_votes("nonexistent");
+        assert!(votes.is_empty());
+    }
+
+    #[test]
+    fn test_ballot_quorum_flag_set() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+
+        for i in 1..=30 {
+            let vote = make_vote(
+                "prop-1",
+                &format!("agent-{i:02}"),
+                VoteType::Approve,
+                AgentRole::Validator,
+                1.0,
+            );
+            let _ = collector.cast_vote("prop-1", vote);
+        }
+
+        let ballot = collector.get_ballot("prop-1").unwrap_or_else(|_| unreachable!());
+        assert!(ballot.quorum_reached);
+    }
+
+    #[test]
+    fn test_total_votes_across_ballots() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+        let _ = collector.open_ballot("prop-2");
+
+        let v1 = make_vote("prop-1", "agent-01", VoteType::Approve, AgentRole::Validator, 1.0);
+        let v2 = make_vote("prop-2", "agent-01", VoteType::Reject, AgentRole::Validator, 1.0);
+        let _ = collector.cast_vote("prop-1", v1);
+        let _ = collector.cast_vote("prop-2", v2);
+
+        assert_eq!(collector.total_votes_cast(), 2);
+    }
+
+    #[test]
+    fn test_same_agent_different_ballots() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+        let _ = collector.open_ballot("prop-2");
+
+        let v1 = make_vote("prop-1", "agent-01", VoteType::Approve, AgentRole::Validator, 1.0);
+        let v2 = make_vote("prop-2", "agent-01", VoteType::Approve, AgentRole::Validator, 1.0);
+        assert!(collector.cast_vote("prop-1", v1).is_ok());
+        assert!(collector.cast_vote("prop-2", v2).is_ok());
+    }
+
+    #[test]
+    fn test_weighted_for_calculation() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+
+        let v1 = make_vote("prop-1", "v-01", VoteType::Approve, AgentRole::Validator, 1.0);
+        let v2 = make_vote("prop-1", "c-01", VoteType::Approve, AgentRole::Critic, 1.2);
+        let _ = collector.cast_vote("prop-1", v1);
+        let _ = collector.cast_vote("prop-1", v2);
+
+        let tally = collector.get_tally("prop-1").unwrap_or_else(|_| unreachable!());
+        assert!((tally.weighted_for - 2.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_participation_rate_full() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+
+        for i in 1..=40 {
+            let vote = make_vote(
+                "prop-1",
+                &format!("agent-{i:02}"),
+                VoteType::Approve,
+                AgentRole::Validator,
+                1.0,
+            );
+            let _ = collector.cast_vote("prop-1", vote);
+        }
+
+        let tally = collector.get_tally("prop-1").unwrap_or_else(|_| unreachable!());
+        assert!((tally.participation_rate - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_close_ballot_multiple_independent() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+        let _ = collector.open_ballot("prop-2");
+
+        let _ = collector.close_ballot("prop-1");
+        assert_eq!(collector.open_ballot_count(), 1);
+
+        let _ = collector.close_ballot("prop-2");
+        assert_eq!(collector.open_ballot_count(), 0);
+    }
+
+    #[test]
+    fn test_ballot_vote_count() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+
+        for i in 1..=5 {
+            let vote = make_vote(
+                "prop-1",
+                &format!("agent-{i:02}"),
+                VoteType::Approve,
+                AgentRole::Validator,
+                1.0,
+            );
+            let _ = collector.cast_vote("prop-1", vote);
+        }
+
+        let ballot = collector.get_ballot("prop-1").unwrap_or_else(|_| unreachable!());
+        assert_eq!(ballot.votes.len(), 5);
+    }
+
+    #[test]
+    fn test_all_abstain() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+
+        for i in 1..=5 {
+            let vote = make_vote(
+                "prop-1",
+                &format!("agent-{i:02}"),
+                VoteType::Abstain,
+                AgentRole::Explorer,
+                0.8,
+            );
+            let _ = collector.cast_vote("prop-1", vote);
+        }
+
+        let tally = collector.get_tally("prop-1").unwrap_or_else(|_| unreachable!());
+        assert_eq!(tally.votes_abstain, 5);
+        assert_eq!(tally.votes_for, 0);
+        assert!(!tally.quorum_reached);
+    }
+
+    #[test]
+    fn test_all_reject() {
+        let collector = VoteCollector::new();
+        let _ = collector.open_ballot("prop-1");
+
+        for i in 1..=30 {
+            let vote = make_vote(
+                "prop-1",
+                &format!("agent-{i:02}"),
+                VoteType::Reject,
+                AgentRole::Critic,
+                1.2,
+            );
+            let _ = collector.cast_vote("prop-1", vote);
+        }
+
+        let tally = collector.get_tally("prop-1").unwrap_or_else(|_| unreachable!());
+        assert_eq!(tally.votes_against, 30);
+        assert!(!tally.quorum_reached);
+    }
 }

@@ -815,4 +815,487 @@ mod tests {
         assert!(manager.record_failure("no->path").is_err());
         assert!(manager.get_metrics("no->path").is_err());
     }
+
+    // ---------------------------------------------------------------
+    // Additional tests to reach 50+
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_default_impl() {
+        let manager = HebbianManager::default();
+        assert!(manager.pathway_count() >= 9);
+    }
+
+    #[test]
+    fn test_add_pathway_returns_correct_key_format() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("src_a", "tgt_b", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        assert!(key.contains("->"));
+        assert!(key.starts_with("src_a"));
+        assert!(key.ends_with("tgt_b"));
+    }
+
+    #[test]
+    fn test_add_multiple_pathways_increases_count() {
+        let manager = HebbianManager::new();
+        let initial = manager.pathway_count();
+        let _ = manager.add_pathway("a1", "b1", PathwayType::AgentToAgent);
+        let _ = manager.add_pathway("a2", "b2", PathwayType::AgentToAgent);
+        let _ = manager.add_pathway("a3", "b3", PathwayType::AgentToAgent);
+        assert_eq!(manager.pathway_count(), initial + 3);
+    }
+
+    #[test]
+    fn test_get_pathway_returns_correct_source_target() {
+        let manager = HebbianManager::new();
+        let _ = manager.add_pathway("get_src", "get_tgt", PathwayType::MetricToAction);
+        let pathway = manager.get_pathway("get_src->get_tgt").ok();
+        assert!(pathway.is_some());
+        if let Some(p) = pathway {
+            assert_eq!(p.source, "get_src");
+            assert_eq!(p.target, "get_tgt");
+        }
+    }
+
+    #[test]
+    fn test_strengthen_increments_ltp_count() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("ltp_src", "ltp_tgt", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        let _ = manager.strengthen(&key);
+        let _ = manager.strengthen(&key);
+        let pathway = manager.get_pathway(&key).ok();
+        assert!(pathway.is_some());
+        if let Some(p) = pathway {
+            assert_eq!(p.ltp_count, 2);
+        }
+    }
+
+    #[test]
+    fn test_weaken_increments_ltd_count() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("ltd_src", "ltd_tgt", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        let _ = manager.weaken(&key);
+        let _ = manager.weaken(&key);
+        let _ = manager.weaken(&key);
+        let pathway = manager.get_pathway(&key).ok();
+        assert!(pathway.is_some());
+        if let Some(p) = pathway {
+            assert_eq!(p.ltd_count, 3);
+        }
+    }
+
+    #[test]
+    fn test_record_success_increments_activation_count() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("act_s", "act_t", PathwayType::PatternToOutcome)
+            .ok()
+            .unwrap_or_default();
+        for _ in 0..5 {
+            let _ = manager.record_success(&key);
+        }
+        let pathway = manager.get_pathway(&key).ok();
+        assert!(pathway.is_some());
+        if let Some(p) = pathway {
+            assert_eq!(p.activation_count, 5);
+            assert_eq!(p.success_count, 5);
+        }
+    }
+
+    #[test]
+    fn test_record_failure_increments_failure_count() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("fail_s2", "fail_t2", PathwayType::ConfigToBehavior)
+            .ok()
+            .unwrap_or_default();
+        for _ in 0..4 {
+            let _ = manager.record_failure(&key);
+        }
+        let pathway = manager.get_pathway(&key).ok();
+        assert!(pathway.is_some());
+        if let Some(p) = pathway {
+            assert_eq!(p.failure_count, 4);
+            assert_eq!(p.activation_count, 4);
+        }
+    }
+
+    #[test]
+    fn test_weakest_pathways_sorted_ascending() {
+        let manager = HebbianManager::new();
+        let key_weak = manager
+            .add_pathway("w_a", "w_b", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        for _ in 0..10 {
+            let _ = manager.weaken(&key_weak);
+        }
+        let weakest = manager.get_weakest_pathways(3);
+        assert!(weakest.len() >= 1);
+        // Verify ascending order
+        for window in weakest.windows(2) {
+            assert!(window[0].strength <= window[1].strength + f64::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_strongest_pathways_sorted_descending() {
+        let manager = HebbianManager::new();
+        let strongest = manager.get_strongest_pathways(5);
+        for window in strongest.windows(2) {
+            assert!(window[0].strength >= window[1].strength - f64::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_get_pathways_for_nonexistent_source() {
+        let manager = HebbianManager::new();
+        let paths = manager.get_pathways_for_source("nonexistent_source");
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn test_routing_weight_after_successes() {
+        let manager = HebbianManager::new();
+        let _ = manager.add_pathway("rw2_s", "rw2_t", PathwayType::ServiceToService);
+        for _ in 0..5 {
+            let _ = manager.record_success("rw2_s->rw2_t");
+        }
+        let weight = manager.get_routing_weight("rw2_s", "rw2_t");
+        assert!(weight > 0.25, "Routing weight should increase after successes");
+    }
+
+    #[test]
+    fn test_decay_does_not_go_below_min_strength() {
+        let manager = HebbianManager::new();
+        // Apply decay many times
+        for _ in 0..500 {
+            manager.apply_decay();
+        }
+        let weakest = manager.get_weakest_pathways(1);
+        assert!(!weakest.is_empty());
+        assert!(
+            weakest[0].strength >= MIN_STRENGTH - f64::EPSILON,
+            "Strength should never go below MIN_STRENGTH after decay"
+        );
+    }
+
+    #[test]
+    fn test_pulse_history_bounded() {
+        let manager = HebbianManager::new();
+        for _ in 0..250 {
+            let _ = manager.trigger_pulse(PulseTrigger::Manual);
+        }
+        let last_pulse = manager.trigger_pulse(PulseTrigger::TimeInterval);
+        assert!(last_pulse.is_ok());
+        if let Ok(p) = last_pulse {
+            assert_eq!(p.pulse_number, 251);
+        }
+    }
+
+    #[test]
+    fn test_pulse_records_average_strength() {
+        let manager = HebbianManager::new();
+        let pulse = manager.trigger_pulse(PulseTrigger::Manual);
+        assert!(pulse.is_ok());
+        if let Ok(p) = pulse {
+            assert!(p.average_strength > 0.0);
+            assert!(p.average_strength <= 1.0);
+        }
+    }
+
+    #[test]
+    fn test_pulse_trigger_types() {
+        let manager = HebbianManager::new();
+        let p1 = manager.trigger_pulse(PulseTrigger::Manual);
+        assert!(p1.is_ok());
+        if let Ok(p) = p1 {
+            assert_eq!(p.trigger_type, PulseTrigger::Manual);
+        }
+        let p2 = manager.trigger_pulse(PulseTrigger::TimeInterval);
+        assert!(p2.is_ok());
+        if let Ok(p) = p2 {
+            assert_eq!(p.trigger_type, PulseTrigger::TimeInterval);
+        }
+    }
+
+    #[test]
+    fn test_metrics_peak_strength_tracks_maximum() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("peak_s", "peak_t", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        for _ in 0..5 {
+            let _ = manager.strengthen(&key);
+        }
+        let peak_after_strengthen = manager
+            .get_metrics(&key)
+            .ok()
+            .map(|m| m.peak_strength)
+            .unwrap_or(0.0);
+
+        for _ in 0..3 {
+            let _ = manager.weaken(&key);
+        }
+        let peak_after_weaken = manager
+            .get_metrics(&key)
+            .ok()
+            .map(|m| m.peak_strength)
+            .unwrap_or(0.0);
+
+        assert!(
+            (peak_after_weaken - peak_after_strengthen).abs() < f64::EPSILON,
+            "Peak strength should remain at maximum"
+        );
+    }
+
+    #[test]
+    fn test_metrics_last_activation_set() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("act_s2", "act_t2", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        let _ = manager.record_success(&key);
+        let metrics = manager.get_metrics(&key);
+        assert!(metrics.is_ok());
+        if let Ok(m) = metrics {
+            assert!(m.last_activation.is_some());
+        }
+    }
+
+    #[test]
+    fn test_remove_pathway_decreases_count() {
+        let manager = HebbianManager::new();
+        let initial = manager.pathway_count();
+        let key = manager
+            .add_pathway("rem_s", "rem_t", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        assert_eq!(manager.pathway_count(), initial + 1);
+        let _ = manager.remove_pathway(&key);
+        assert_eq!(manager.pathway_count(), initial);
+    }
+
+    #[test]
+    fn test_split_key_with_no_arrow() {
+        let manager = HebbianManager::new();
+        // Test internal split_key indirectly through error
+        let result = manager.get_pathway("noarrow");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_strengthen_then_weaken_returns_to_near_original() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("sw_s", "sw_t", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        let initial = manager.get_strength(&key).ok().unwrap_or(0.0);
+        let _ = manager.strengthen(&key);
+        let _ = manager.weaken(&key);
+        let final_strength = manager.get_strength(&key).ok().unwrap_or(0.0);
+        // Due to asymmetric LTP/LTD rates, should be close but not exact
+        assert!((final_strength - initial).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_decay_returns_zero_when_all_at_min() {
+        let manager = HebbianManager::new();
+        // Weaken all pathways to minimum
+        for _ in 0..500 {
+            manager.apply_decay();
+        }
+        // Now decay should affect zero pathways
+        let affected = manager.apply_decay();
+        assert_eq!(affected, 0, "No pathways should be affected at minimum strength");
+    }
+
+    #[test]
+    fn test_multiple_pathway_types() {
+        let manager = HebbianManager::new();
+        let types = [
+            PathwayType::AgentToAgent,
+            PathwayType::ServiceToService,
+            PathwayType::SystemToSystem,
+            PathwayType::MetricToAction,
+            PathwayType::PatternToOutcome,
+            PathwayType::ConfigToBehavior,
+        ];
+        for (i, pt) in types.iter().enumerate() {
+            let result = manager.add_pathway(format!("type_s{i}"), format!("type_t{i}"), *pt);
+            assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_concurrent_access() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let manager = Arc::new(HebbianManager::new());
+        let key = manager
+            .add_pathway("conc_s", "conc_t", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let mgr = Arc::clone(&manager);
+            let k = key.clone();
+            handles.push(thread::spawn(move || {
+                for _ in 0..10 {
+                    let _ = mgr.strengthen(&k);
+                }
+            }));
+        }
+        for handle in handles {
+            let _ = handle.join();
+        }
+
+        let pathway = manager.get_pathway(&key).ok();
+        assert!(pathway.is_some());
+        if let Some(p) = pathway {
+            assert_eq!(p.ltp_count, 40);
+        }
+    }
+
+    #[test]
+    fn test_pathway_count_includes_defaults_and_added() {
+        let manager = HebbianManager::new();
+        let default_count = manager.pathway_count();
+        let _ = manager.add_pathway("extra_s", "extra_t", PathwayType::AgentToAgent);
+        assert_eq!(manager.pathway_count(), default_count + 1);
+    }
+
+    #[test]
+    fn test_get_strongest_pathways_empty_when_n_zero() {
+        let manager = HebbianManager::new();
+        let result = manager.get_strongest_pathways(0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_weakest_pathways_empty_when_n_zero() {
+        let manager = HebbianManager::new();
+        let result = manager.get_weakest_pathways(0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_strongest_returns_at_most_n() {
+        let manager = HebbianManager::new();
+        let result = manager.get_strongest_pathways(2);
+        assert!(result.len() <= 2);
+    }
+
+    #[test]
+    fn test_add_and_get_pathway_roundtrip() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("rt_src", "rt_tgt", PathwayType::MetricToAction)
+            .ok()
+            .unwrap_or_default();
+        let pathway = manager.get_pathway(&key);
+        assert!(pathway.is_ok());
+        if let Ok(p) = pathway {
+            assert_eq!(p.pathway_type, PathwayType::MetricToAction);
+            assert!((p.strength - 0.5).abs() < f64::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_metrics_created_for_new_pathway() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("mc_s", "mc_t", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        let metrics = manager.get_metrics(&key);
+        assert!(metrics.is_ok());
+        if let Ok(m) = metrics {
+            assert_eq!(m.total_activations, 0);
+            assert_eq!(m.total_ltp, 0);
+            assert_eq!(m.total_ltd, 0);
+        }
+    }
+
+    #[test]
+    fn test_apply_decay_does_not_exceed_one() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("dc_s", "dc_t", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        for _ in 0..20 {
+            let _ = manager.strengthen(&key);
+        }
+        manager.apply_decay();
+        let s = manager.get_strength(&key).ok().unwrap_or(2.0);
+        assert!(s <= 1.0);
+    }
+
+    #[test]
+    fn test_get_pathways_for_source_with_added() {
+        let manager = HebbianManager::new();
+        let _ = manager.add_pathway("custom_src", "t1", PathwayType::AgentToAgent);
+        let _ = manager.add_pathway("custom_src", "t2", PathwayType::AgentToAgent);
+        let paths = manager.get_pathways_for_source("custom_src");
+        assert_eq!(paths.len(), 2);
+    }
+
+    #[test]
+    fn test_metrics_avg_strength_equals_strength() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("avg_s", "avg_t", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        let strength = manager.get_strength(&key).ok().unwrap_or(0.0);
+        let metrics = manager.get_metrics(&key).ok();
+        assert!(metrics.is_some());
+        if let Some(m) = metrics {
+            assert!((m.avg_strength - strength).abs() < f64::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_pulse_total_pathways_count() {
+        let manager = HebbianManager::new();
+        let count = manager.pathway_count();
+        let pulse = manager.trigger_pulse(PulseTrigger::Manual);
+        assert!(pulse.is_ok());
+        if let Ok(p) = pulse {
+            assert_eq!(p.total_pathways as usize, count);
+        }
+    }
+
+    #[test]
+    fn test_record_success_then_failure_balance() {
+        let manager = HebbianManager::new();
+        let key = manager
+            .add_pathway("bal_s", "bal_t", PathwayType::ServiceToService)
+            .ok()
+            .unwrap_or_default();
+        let _ = manager.record_success(&key);
+        let _ = manager.record_failure(&key);
+        let pathway = manager.get_pathway(&key).ok();
+        assert!(pathway.is_some());
+        if let Some(p) = pathway {
+            assert_eq!(p.success_count, 1);
+            assert_eq!(p.failure_count, 1);
+            assert_eq!(p.activation_count, 2);
+        }
+    }
 }

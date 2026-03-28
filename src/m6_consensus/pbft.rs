@@ -757,4 +757,275 @@ mod tests {
         let result = mgr.tally_votes("nonexistent");
         assert!(result.is_err());
     }
+
+    // ---------------------------------------------------------------
+    // Additional tests to reach 50+
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_default_impl() {
+        let mgr = PbftManager::default();
+        assert_eq!(mgr.get_fleet().len(), 41);
+    }
+
+    #[test]
+    fn test_fleet_has_human_agent() {
+        let mgr = PbftManager::new();
+        let human = mgr.get_agent("@0.A");
+        assert!(human.is_ok());
+    }
+
+    #[test]
+    fn test_fleet_has_correct_role_counts() {
+        let mgr = PbftManager::new();
+        let fleet = mgr.get_fleet();
+        let validators = fleet.iter().filter(|a| a.role == AgentRole::Validator).count();
+        let explorers = fleet.iter().filter(|a| a.role == AgentRole::Explorer).count();
+        let critics = fleet.iter().filter(|a| a.role == AgentRole::Critic).count();
+        let integrators = fleet.iter().filter(|a| a.role == AgentRole::Integrator).count();
+        // 21 validators (including @0.A), 8 explorers, 6 critics, 4 integrators, 2 historians
+        assert!(validators >= 20);
+        assert!(explorers >= 8);
+        assert!(critics >= 6);
+        assert!(integrators >= 4);
+    }
+
+    #[test]
+    fn test_get_agent_unknown_fails() {
+        let mgr = PbftManager::new();
+        let result = mgr.get_agent("nonexistent-agent");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_multiple_proposals() {
+        let mgr = PbftManager::new();
+        let p1 = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A");
+        let p2 = mgr.create_proposal(ConsensusAction::DatabaseMigration, "@0.A");
+        assert!(p1.is_ok());
+        assert!(p2.is_ok());
+        assert_eq!(mgr.proposal_count(), 2);
+    }
+
+    #[test]
+    fn test_proposal_ids_unique() {
+        let mgr = PbftManager::new();
+        let p1 = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A")
+            .ok().map(|p| p.id).unwrap_or_default();
+        let p2 = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A")
+            .ok().map(|p| p.id).unwrap_or_default();
+        assert_ne!(p1, p2);
+    }
+
+    #[test]
+    fn test_proposal_sequence_numbers_increasing() {
+        let mgr = PbftManager::new();
+        let p1 = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A")
+            .ok().map(|p| p.sequence_number).unwrap_or(0);
+        let p2 = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A")
+            .ok().map(|p| p.sequence_number).unwrap_or(0);
+        assert_eq!(p2, p1 + 1);
+    }
+
+    #[test]
+    fn test_advance_nonexistent_proposal_fails() {
+        let mgr = PbftManager::new();
+        let result = mgr.advance_phase("nonexistent");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_submit_vote_nonexistent_proposal_fails() {
+        let mgr = PbftManager::new();
+        let result = mgr.submit_vote("nonexistent", "@0.A", VoteType::Approve, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_votes_returns_all() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ConfigRollback, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let pid = proposal.id.clone();
+
+        let _ = mgr.submit_vote(&pid, "@0.A", VoteType::Approve, None);
+        let _ = mgr.submit_vote(&pid, "agent-01", VoteType::Reject, None);
+        let _ = mgr.submit_vote(&pid, "agent-02", VoteType::Abstain, None);
+
+        let votes = mgr.get_votes(&pid).unwrap_or_else(|_| unreachable!());
+        assert_eq!(votes.len(), 3);
+    }
+
+    #[test]
+    fn test_tally_with_mixed_votes() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::CascadeRestart, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let pid = proposal.id.clone();
+
+        let fleet = mgr.get_fleet();
+        // 20 approvals, 10 rejections, 5 abstentions
+        for agent in fleet.iter().take(20) {
+            let _ = mgr.submit_vote(&pid, &agent.id, VoteType::Approve, None);
+        }
+        for agent in fleet.iter().skip(20).take(10) {
+            let _ = mgr.submit_vote(&pid, &agent.id, VoteType::Reject, None);
+        }
+        for agent in fleet.iter().skip(30).take(5) {
+            let _ = mgr.submit_vote(&pid, &agent.id, VoteType::Abstain, None);
+        }
+
+        let outcome = mgr.tally_votes(&pid).unwrap_or_else(|_| unreachable!());
+        assert_eq!(outcome.votes_for, 20);
+        assert_eq!(outcome.votes_against, 10);
+        assert_eq!(outcome.votes_abstained, 5);
+    }
+
+    #[test]
+    fn test_vote_weight_preserved() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ConfigRollback, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let pid = proposal.id.clone();
+
+        let vote = mgr.submit_vote(&pid, "agent-29", VoteType::Approve, None)
+            .unwrap_or_else(|_| unreachable!());
+        assert!((vote.weight - 1.2).abs() < f64::EPSILON, "Critics have weight 1.2");
+    }
+
+    #[test]
+    fn test_vote_reason_preserved() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ConfigRollback, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let pid = proposal.id.clone();
+
+        let vote = mgr.submit_vote(&pid, "@0.A", VoteType::Approve, Some("Looks good".into()))
+            .unwrap_or_else(|_| unreachable!());
+        assert_eq!(vote.reason.as_deref(), Some("Looks good"));
+    }
+
+    #[test]
+    fn test_get_outcome() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let pid = proposal.id.clone();
+
+        let _ = mgr.tally_votes(&pid);
+        let outcome = mgr.get_outcome(&pid);
+        assert!(outcome.is_ok());
+    }
+
+    #[test]
+    fn test_get_outcome_not_found() {
+        let mgr = PbftManager::new();
+        let result = mgr.get_outcome("nonexistent");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_active_proposals_excludes_completed() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ConfigRollback, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let pid = proposal.id.clone();
+
+        // Advance through all phases
+        let _ = mgr.advance_phase(&pid);
+        let fleet = mgr.get_fleet();
+        for agent in fleet.iter().take(36) {
+            let _ = mgr.submit_vote(&pid, &agent.id, VoteType::Approve, None);
+        }
+        let _ = mgr.advance_phase(&pid);
+        let _ = mgr.advance_phase(&pid);
+        let _ = mgr.advance_phase(&pid);
+
+        let active = mgr.get_active_proposals();
+        assert!(active.iter().all(|p| p.id != pid));
+    }
+
+    #[test]
+    fn test_tally_with_no_votes() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let outcome = mgr.tally_votes(&proposal.id).unwrap_or_else(|_| unreachable!());
+        assert!(!outcome.quorum_reached);
+        assert_eq!(outcome.votes_for, 0);
+    }
+
+    #[test]
+    fn test_advance_failed_proposal_fails() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ConfigRollback, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let pid = proposal.id.clone();
+
+        // Manually set phase to Failed via advance (quorum failure)
+        let _ = mgr.advance_phase(&pid); // PrePrepare -> Prepare
+        // Try to advance without quorum
+        let result = mgr.advance_phase(&pid); // Prepare -> Commit (should fail)
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_weighted_votes_in_tally() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::DatabaseMigration, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let pid = proposal.id.clone();
+
+        // Submit votes from agents with different weights
+        let _ = mgr.submit_vote(&pid, "@0.A", VoteType::Approve, None); // weight 1.0
+        let _ = mgr.submit_vote(&pid, "agent-29", VoteType::Approve, None); // weight 1.2 (Critic)
+
+        let outcome = mgr.tally_votes(&pid).unwrap_or_else(|_| unreachable!());
+        assert!(outcome.weighted_for > 2.0, "Weighted sum should reflect critic weight");
+    }
+
+    #[test]
+    fn test_proposal_action_preserved() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::CredentialRotation, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        assert_eq!(proposal.action_type, ConsensusAction::CredentialRotation);
+    }
+
+    #[test]
+    fn test_proposal_initial_phase() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        assert_eq!(proposal.phase, ConsensusPhase::PrePrepare);
+    }
+
+    #[test]
+    fn test_get_votes_nonexistent_fails() {
+        let mgr = PbftManager::new();
+        let result = mgr.get_votes("nonexistent");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_explorer_weight() {
+        let mgr = PbftManager::new();
+        let explorer = mgr.get_agent("agent-21").unwrap_or_else(|_| unreachable!());
+        assert_eq!(explorer.role, AgentRole::Explorer);
+        assert!((explorer.weight - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_integrator_role() {
+        let mgr = PbftManager::new();
+        let integrator = mgr.get_agent("agent-35").unwrap_or_else(|_| unreachable!());
+        assert_eq!(integrator.role, AgentRole::Integrator);
+    }
+
+    #[test]
+    fn test_human_agent_status_active() {
+        let mgr = PbftManager::new();
+        let human = mgr.get_agent("@0.A").unwrap_or_else(|_| unreachable!());
+        assert_eq!(human.status, AgentStatus::Active);
+    }
 }

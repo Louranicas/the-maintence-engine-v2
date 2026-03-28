@@ -927,4 +927,174 @@ mod tests {
         assert_eq!(r.patterns_for_service("synthex").len(), 1);
         assert_eq!(r.patterns_for_service("san-k7").len(), 1);
     }
+
+    // ---------------------------------------------------------------
+    // Additional tests to reach 50+
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_default_impl() {
+        let r = PatternRecognizer::default();
+        assert_eq!(r.pattern_count(), 0);
+    }
+
+    #[test]
+    fn test_register_multiple_patterns() {
+        let r = PatternRecognizer::new();
+        for i in 0..10 {
+            let _ = r.register_pattern(
+                &format!("p{i}"),
+                PatternType::Metric,
+                &format!("sig{i}"),
+                "out",
+                vec![],
+            );
+        }
+        assert_eq!(r.pattern_count(), 10);
+    }
+
+    #[test]
+    fn test_pattern_ids_are_unique() {
+        let r = PatternRecognizer::new();
+        let id1 = r.register_pattern("a", PatternType::State, "s1", "o", vec![]).unwrap_or_default();
+        let id2 = r.register_pattern("b", PatternType::State, "s2", "o", vec![]).unwrap_or_default();
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_composite_score_zero_for_zero_values() {
+        let p = Pattern {
+            id: "t".into(),
+            name: "t".into(),
+            pattern_type: PatternType::State,
+            signature: "s".into(),
+            confidence: 0.0,
+            strength: 0.0,
+            occurrence_count: 0,
+            correct_predictions: 0,
+            associated_outcome: "o".into(),
+            involved_services: vec![],
+            first_seen: SystemTime::now(),
+            last_seen: SystemTime::now(),
+            active: true,
+        };
+        assert!((p.composite_score()).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_find_by_type_multiple() {
+        let r = PatternRecognizer::new();
+        r.register_pattern("a", PatternType::Temporal, "sa", "o", vec![]).ok();
+        r.register_pattern("b", PatternType::Temporal, "sb", "o", vec![]).ok();
+        r.register_pattern("c", PatternType::State, "sc", "o", vec![]).ok();
+        assert_eq!(r.find_by_type(PatternType::Temporal).len(), 2);
+        assert_eq!(r.find_by_type(PatternType::State).len(), 1);
+    }
+
+    #[test]
+    fn test_find_by_signature_partial_match() {
+        let r = PatternRecognizer::new();
+        r.register_pattern("n", PatternType::Failure, "cpu_spike_cascade", "o", vec![]).ok();
+        let found = r.find_by_signature("spike");
+        assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn test_find_by_signature_inactive_excluded() {
+        let r = PatternRecognizer::new();
+        let id = r.register_pattern("n", PatternType::State, "test_sig", "o", vec![]).unwrap_or_default();
+        r.deactivate(&id).ok();
+        let found = r.find_by_signature("test_sig");
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn test_mark_outcome_increases_strength() {
+        let r = setup_recognizer();
+        let id = r.patterns.read().keys().next().cloned().unwrap_or_default();
+        let before = r.get_pattern(&id).map(|p| p.strength).unwrap_or(0.0);
+        r.mark_outcome(&id, true).ok();
+        let after = r.get_pattern(&id).map(|p| p.strength).unwrap_or(0.0);
+        assert!(after > before);
+    }
+
+    #[test]
+    fn test_mark_outcome_incorrect_decreases_strength() {
+        let r = setup_recognizer();
+        let id = r.patterns.read().keys().next().cloned().unwrap_or_default();
+        let before = r.get_pattern(&id).map(|p| p.strength).unwrap_or(0.0);
+        r.mark_outcome(&id, false).ok();
+        let after = r.get_pattern(&id).map(|p| p.strength).unwrap_or(0.0);
+        assert!(after < before);
+    }
+
+    #[test]
+    fn test_strength_clamped_at_one() {
+        let r = PatternRecognizer::new();
+        let id = r.register_pattern("n", PatternType::State, "s", "o", vec![]).unwrap_or_default();
+        {
+            let mut patterns = r.patterns.write();
+            if let Some(p) = patterns.get_mut(&id) {
+                p.strength = 0.99;
+            }
+        }
+        r.mark_outcome(&id, true).ok();
+        let s = r.get_pattern(&id).map(|p| p.strength).unwrap_or(0.0);
+        assert!(s <= 1.0);
+    }
+
+    #[test]
+    fn test_strength_clamped_at_zero() {
+        let r = PatternRecognizer::new();
+        let id = r.register_pattern("n", PatternType::State, "s", "o", vec![]).unwrap_or_default();
+        {
+            let mut patterns = r.patterns.write();
+            if let Some(p) = patterns.get_mut(&id) {
+                p.strength = 0.01;
+            }
+        }
+        r.mark_outcome(&id, false).ok();
+        let s = r.get_pattern(&id).map(|p| p.strength).unwrap_or(-1.0);
+        assert!(s >= 0.0);
+    }
+
+    #[test]
+    fn test_pattern_type_display_all() {
+        assert_eq!(PatternType::State.to_string(), "STATE");
+        assert_eq!(PatternType::Metric.to_string(), "METRIC");
+        assert_eq!(PatternType::Pathway.to_string(), "PATHWAY");
+        assert_eq!(PatternType::Recovery.to_string(), "RECOVERY");
+    }
+
+    #[test]
+    fn test_top_patterns_less_than_n() {
+        let r = PatternRecognizer::new();
+        r.register_pattern("p", PatternType::State, "s", "o", vec![]).ok();
+        let top = r.top_patterns(10);
+        assert_eq!(top.len(), 1);
+    }
+
+    #[test]
+    fn test_remove_also_removes_matches() {
+        let r = setup_recognizer();
+        let id = r.patterns.read().keys().next().cloned().unwrap_or_default();
+        let _ = r.record_match(&id, "trigger", 0.9);
+        assert_eq!(r.total_match_count(), 1);
+        r.remove_pattern(&id).ok();
+        assert_eq!(r.total_match_count(), 0);
+    }
+
+    #[test]
+    fn test_type_summary_contains_correct_counts() {
+        let r = PatternRecognizer::new();
+        r.register_pattern("a", PatternType::Temporal, "sa", "o", vec![]).ok();
+        r.register_pattern("b", PatternType::Temporal, "sb", "o", vec![]).ok();
+        r.register_pattern("c", PatternType::Failure, "sc", "o", vec![]).ok();
+        let summary = r.type_summary();
+        let temporal = summary.iter().find(|s| s.pattern_type == PatternType::Temporal);
+        assert!(temporal.is_some());
+        if let Some(t) = temporal {
+            assert_eq!(t.count, 2);
+        }
+    }
 }

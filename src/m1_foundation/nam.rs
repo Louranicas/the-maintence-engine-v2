@@ -704,4 +704,204 @@ mod tests {
             let _id = AgentId::from(origin);
         }
     }
+
+    // ====================================================================
+    // Confidence clamping and arithmetic tests
+    // ====================================================================
+
+    #[test]
+    fn test_confidence_clamps_negative_value() {
+        let c = Confidence::new(-1.0, 0.0, 1.0);
+        assert!((c.value - 0.0).abs() < f64::EPSILON);
+        assert!(c.is_valid());
+    }
+
+    #[test]
+    fn test_confidence_clamps_value_above_one() {
+        let c = Confidence::new(2.5, 0.0, 1.0);
+        assert!((c.value - 1.0).abs() < f64::EPSILON);
+        assert!(c.is_valid());
+    }
+
+    #[test]
+    fn test_confidence_clamps_all_negative() {
+        let c = Confidence::new(-5.0, -10.0, -1.0);
+        assert!((c.value - 0.0).abs() < f64::EPSILON);
+        assert!((c.lower - 0.0).abs() < f64::EPSILON);
+        assert!((c.upper - 0.0).abs() < f64::EPSILON);
+        assert!(c.is_valid());
+    }
+
+    #[test]
+    fn test_confidence_clamps_all_above_one() {
+        let c = Confidence::new(5.0, 3.0, 10.0);
+        assert!((c.value - 1.0).abs() < f64::EPSILON);
+        assert!((c.lower - 1.0).abs() < f64::EPSILON);
+        assert!((c.upper - 1.0).abs() < f64::EPSILON);
+        assert!(c.is_valid());
+    }
+
+    #[test]
+    fn test_confidence_zero_interval() {
+        let c = Confidence::new(0.0, 0.0, 0.0);
+        assert!((c.value - 0.0).abs() < f64::EPSILON);
+        assert!((c.lower - 0.0).abs() < f64::EPSILON);
+        assert!((c.upper - 0.0).abs() < f64::EPSILON);
+        assert!(c.is_valid());
+    }
+
+    #[test]
+    fn test_confidence_swap_and_clamp_combined() {
+        // lower=1.5, upper=0.2 -> clamp first to (1.0, 0.2), then swap to (0.2, 1.0)
+        let c = Confidence::new(0.5, 1.5, 0.2);
+        assert!((c.value - 0.5).abs() < f64::EPSILON);
+        assert!((c.lower - 0.2).abs() < f64::EPSILON);
+        assert!((c.upper - 1.0).abs() < f64::EPSILON);
+        assert!(c.is_valid());
+    }
+
+    #[test]
+    fn test_confidence_is_valid_on_manually_constructed() {
+        // Manually build a confidence with invalid state
+        let valid = Confidence {
+            value: 0.5,
+            lower: 0.2,
+            upper: 0.8,
+        };
+        assert!(valid.is_valid());
+
+        let invalid_lower = Confidence {
+            value: 0.5,
+            lower: 0.9,
+            upper: 0.3,
+        };
+        assert!(!invalid_lower.is_valid(), "lower > upper should be invalid");
+    }
+
+    // ====================================================================
+    // AgentOrigin display and equality tests
+    // ====================================================================
+
+    #[test]
+    fn test_agent_origin_human_display_contains_tag() {
+        let origin = AgentOrigin::Human {
+            tag: "custom-tag".to_string(),
+        };
+        let display = origin.to_string();
+        assert_eq!(display, "Human(custom-tag)");
+    }
+
+    #[test]
+    fn test_agent_origin_service_display_with_special_chars() {
+        let origin = AgentOrigin::service("my-service-v2.1");
+        let display = origin.to_string();
+        assert!(display.contains("my-service-v2.1"));
+    }
+
+    #[test]
+    fn test_agent_origin_system_not_equal_to_human() {
+        assert_ne!(AgentOrigin::System, AgentOrigin::human());
+    }
+
+    #[test]
+    fn test_agent_origin_different_services_not_equal() {
+        let a = AgentOrigin::service("service-a");
+        let b = AgentOrigin::service("service-b");
+        assert_ne!(a, b);
+    }
+
+    // ====================================================================
+    // LearningSignal variants tests
+    // ====================================================================
+
+    #[test]
+    fn test_learning_signal_partial_clamps_negative() {
+        let sig = LearningSignal::partial("M06", -0.5);
+        assert!((sig.magnitude - 0.0).abs() < f64::EPSILON);
+        assert_eq!(sig.outcome, Outcome::Partial);
+    }
+
+    #[test]
+    fn test_learning_signal_success_has_no_pathway() {
+        let sig = LearningSignal::success("src");
+        assert!(sig.pathway_id.is_none());
+        assert_eq!(sig.source, "src");
+    }
+
+    #[test]
+    fn test_learning_signal_with_pathway_chained() {
+        let sig = LearningSignal::failure("M07").with_pathway("hebbian-42");
+        assert_eq!(sig.outcome, Outcome::Failure);
+        assert_eq!(sig.pathway_id.as_deref(), Some("hebbian-42"));
+        assert!((sig.magnitude - 1.0).abs() < f64::EPSILON);
+    }
+
+    // ====================================================================
+    // Outcome variants tests
+    // ====================================================================
+
+    #[test]
+    fn test_outcome_all_variants_distinct() {
+        let variants = [Outcome::Success, Outcome::Failure, Outcome::Partial];
+        for (i, a) in variants.iter().enumerate() {
+            for (j, b) in variants.iter().enumerate() {
+                if i == j {
+                    assert_eq!(a, b);
+                } else {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_outcome_hash_consistency() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(Outcome::Success);
+        set.insert(Outcome::Failure);
+        set.insert(Outcome::Partial);
+        assert_eq!(set.len(), 3);
+        // Inserting duplicate should not increase size
+        set.insert(Outcome::Success);
+        assert_eq!(set.len(), 3);
+    }
+
+    // ====================================================================
+    // Dissent construction tests
+    // ====================================================================
+
+    #[test]
+    fn test_dissent_with_confidence_clamps_negative() {
+        let d = Dissent::new(AgentOrigin::System, "target", "reason")
+            .with_confidence(-0.5);
+        assert!((d.confidence - 0.0).abs() < f64::EPSILON);
+        assert!(d.is_valid());
+    }
+
+    #[test]
+    fn test_dissent_display_includes_confidence() {
+        let d = Dissent::new(AgentOrigin::service("san-k7"), "d-002", "bad config")
+            .with_confidence(0.85);
+        let display = d.to_string();
+        assert!(display.contains("0.85"));
+        assert!(display.contains("bad config"));
+        assert!(display.contains("d-002"));
+    }
+
+    // ====================================================================
+    // Constants tests
+    // ====================================================================
+
+    #[test]
+    fn test_module_count_value() {
+        assert_eq!(MODULE_COUNT, 9);
+        assert!(MODULE_COUNT > 0);
+    }
+
+    #[test]
+    fn test_human_agent_tag_format() {
+        assert!(HUMAN_AGENT_TAG.starts_with('@'));
+        assert_eq!(HUMAN_AGENT_TAG.len(), 4);
+    }
 }

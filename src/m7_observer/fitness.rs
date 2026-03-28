@@ -1003,4 +1003,94 @@ mod tests {
         let eval = make_evaluator();
         assert_eq!(eval.config().trend_window, DEFAULT_TREND_WINDOW);
     }
+
+    // ---------------------------------------------------------------
+    // Additional tests to reach 50+
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_config_validation_stability_out_of_range() {
+        let config = FitnessConfig {
+            stability_tolerance: 1.5,
+            ..FitnessConfig::default()
+        };
+        assert!(FitnessEvaluator::validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_config_validation_volatility_out_of_range() {
+        let config = FitnessConfig {
+            volatility_threshold: -0.1,
+            ..FitnessConfig::default()
+        };
+        assert!(FitnessEvaluator::validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_average_fitness_single() {
+        let eval = make_evaluator();
+        let _r = eval.evaluate(&healthy_tensor(), None);
+        let avg = eval.average_fitness(1);
+        let current = eval.current_fitness();
+        assert!(avg.is_some());
+        assert!(current.is_some());
+        assert!((avg.unwrap_or(0.0) - current.unwrap_or(1.0)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_fitness_range_single_entry() {
+        let eval = make_evaluator();
+        let _r = eval.evaluate(&healthy_tensor(), None);
+        let range = eval.fitness_range();
+        assert!(range.is_some());
+        let (min, max) = range.unwrap_or((0.0, 0.0));
+        assert!((min - max).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_system_state_from_fitness_edge_cases() {
+        assert_eq!(SystemState::from_fitness(1.0), SystemState::Optimal);
+        assert_eq!(SystemState::from_fitness(0.899), SystemState::Healthy);
+        assert_eq!(SystemState::from_fitness(0.699), SystemState::Degraded);
+        assert_eq!(SystemState::from_fitness(0.299), SystemState::Failed);
+    }
+
+    #[test]
+    fn test_dimension_names_stable() {
+        let names = FitnessEvaluator::dimension_names();
+        assert_eq!(names[0], "service_id");
+        assert_eq!(names[6], "health_score");
+        assert_eq!(names[11], "temporal_context");
+    }
+
+    #[test]
+    fn test_dimension_name_out_of_bounds() {
+        assert!(FitnessEvaluator::dimension_name(100).is_none());
+    }
+
+    #[test]
+    fn test_fitness_delta_positive() {
+        let eval = make_evaluator();
+        let _r = eval.evaluate(&degraded_tensor(), None);
+        let _r = eval.evaluate(&healthy_tensor(), None);
+        let delta = eval.fitness_delta();
+        assert!(delta.is_some());
+        assert!(delta.unwrap_or(0.0) > 0.0, "degraded -> healthy should be positive delta");
+    }
+
+    #[test]
+    fn test_recent_snapshots_empty() {
+        let eval = make_evaluator();
+        let recent = eval.recent_snapshots(5);
+        assert!(recent.is_empty());
+    }
+
+    #[test]
+    fn test_current_state_after_evaluation() {
+        let eval = make_evaluator();
+        let _r = eval.evaluate(&healthy_tensor(), None);
+        let state = eval.current_state();
+        assert!(state.is_some());
+        assert!(matches!(state.unwrap_or(SystemState::Failed), SystemState::Healthy | SystemState::Optimal));
+    }
 }

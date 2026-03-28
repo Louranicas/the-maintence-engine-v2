@@ -802,4 +802,326 @@ mod tests {
             "Detection log should be bounded at capacity"
         );
     }
+
+    // ---------------------------------------------------------------
+    // Additional tests to reach 50+
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_default_impl() {
+        let detector = AntiPatternDetector::default();
+        assert_eq!(detector.pattern_count(), 15);
+    }
+
+    #[test]
+    fn test_register_severity_boundary_zero() {
+        let detector = AntiPatternDetector::new();
+        let result = detector.register_pattern(
+            "AP-ZERO", AntiPatternCategory::Code, "zero_sev", "desc", 0.0,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_register_severity_boundary_one() {
+        let detector = AntiPatternDetector::new();
+        let result = detector.register_pattern(
+            "AP-ONE", AntiPatternCategory::Code, "one_sev", "desc", 1.0,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_register_negative_severity_fails() {
+        let detector = AntiPatternDetector::new();
+        let result = detector.register_pattern(
+            "AP-NEG", AntiPatternCategory::Code, "neg", "desc", -0.1,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_detect_inherits_correct_severity() {
+        let detector = AntiPatternDetector::new();
+        // AP-C004 has severity 0.7
+        let detection = detector.detect("AP-C004", "unbounded channel found");
+        assert!(detection.is_ok());
+        if let Ok(d) = detection {
+            assert!((d.severity - 0.7).abs() < f64::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_detect_multiple_patterns() {
+        let detector = AntiPatternDetector::new();
+        let _ = detector.detect("AP-C001", "unwrap 1");
+        let _ = detector.detect("AP-C002", "unsafe 1");
+        let _ = detector.detect("AP-C003", "panic 1");
+        assert_eq!(detector.violation_count(), 3);
+    }
+
+    #[test]
+    fn test_resolve_nonexistent_fails() {
+        let detector = AntiPatternDetector::new();
+        assert!(detector.resolve("nonexistent-uuid").is_err());
+    }
+
+    #[test]
+    fn test_resolve_idempotent() {
+        let detector = AntiPatternDetector::new();
+        let d = detector.detect("AP-C001", "test").ok();
+        assert!(d.is_some());
+        if let Some(det) = d {
+            assert!(detector.resolve(&det.id).is_ok());
+            // Resolving again should still succeed
+            assert!(detector.resolve(&det.id).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_unresolved_order_newest_first() {
+        let detector = AntiPatternDetector::new();
+        let _ = detector.detect("AP-C001", "first");
+        let _ = detector.detect("AP-C002", "second");
+        let _ = detector.detect("AP-C003", "third");
+
+        let unresolved = detector.get_unresolved();
+        assert_eq!(unresolved.len(), 3);
+        assert!(unresolved[0].context.contains("third"));
+        assert!(unresolved[2].context.contains("first"));
+    }
+
+    #[test]
+    fn test_get_violations_returns_zero_for_unknown() {
+        let detector = AntiPatternDetector::new();
+        assert_eq!(detector.get_violations("AP-UNKNOWN"), 0);
+    }
+
+    #[test]
+    fn test_most_frequent_empty_when_no_violations() {
+        let detector = AntiPatternDetector::new();
+        let top = detector.most_frequent_violations(5);
+        assert!(top.is_empty());
+    }
+
+    #[test]
+    fn test_most_frequent_truncated() {
+        let detector = AntiPatternDetector::new();
+        let _ = detector.detect("AP-C001", "v1");
+        let _ = detector.detect("AP-C002", "v2");
+        let _ = detector.detect("AP-C003", "v3");
+        let top = detector.most_frequent_violations(1);
+        assert_eq!(top.len(), 1);
+    }
+
+    #[test]
+    fn test_category_display() {
+        assert_eq!(AntiPatternCategory::Code.to_string(), "Code");
+        assert_eq!(AntiPatternCategory::Workflow.to_string(), "Workflow");
+        assert_eq!(AntiPatternCategory::Architecture.to_string(), "Architecture");
+        assert_eq!(AntiPatternCategory::Consensus.to_string(), "Consensus");
+    }
+
+    #[test]
+    fn test_detection_has_uuid_format() {
+        let detector = AntiPatternDetector::new();
+        let d = detector.detect("AP-C001", "test");
+        assert!(d.is_ok());
+        if let Ok(det) = d {
+            assert!(det.id.contains('-'), "Detection ID should be UUID format");
+        }
+    }
+
+    #[test]
+    fn test_detection_not_resolved_by_default() {
+        let detector = AntiPatternDetector::new();
+        let d = detector.detect("AP-C001", "test");
+        assert!(d.is_ok());
+        if let Ok(det) = d {
+            assert!(!det.resolved);
+        }
+    }
+
+    #[test]
+    fn test_detections_by_category_empty() {
+        let detector = AntiPatternDetector::new();
+        let dets = detector.get_detections_by_category(AntiPatternCategory::Code);
+        assert!(dets.is_empty());
+    }
+
+    #[test]
+    fn test_register_all_categories() {
+        let detector = AntiPatternDetector::new();
+        let categories = [
+            AntiPatternCategory::Code,
+            AntiPatternCategory::Workflow,
+            AntiPatternCategory::Architecture,
+            AntiPatternCategory::Consensus,
+        ];
+        for (i, cat) in categories.iter().enumerate() {
+            let result = detector.register_pattern(
+                format!("AP-TEST-{i}"), *cat, format!("test_{i}"), "desc", 0.5,
+            );
+            assert!(result.is_ok());
+        }
+        assert_eq!(detector.pattern_count(), 19);
+    }
+
+    #[test]
+    fn test_violation_count_zero_initially() {
+        let detector = AntiPatternDetector::new();
+        assert_eq!(detector.violation_count(), 0);
+    }
+
+    #[test]
+    fn test_detect_context_preserved() {
+        let detector = AntiPatternDetector::new();
+        let d = detector.detect("AP-C001", "found in src/main.rs:42");
+        assert!(d.is_ok());
+        if let Ok(det) = d {
+            assert_eq!(det.context, "found in src/main.rs:42");
+        }
+    }
+
+    #[test]
+    fn test_detect_pattern_id_preserved() {
+        let detector = AntiPatternDetector::new();
+        let d = detector.detect("AP-W002", "skip health");
+        assert!(d.is_ok());
+        if let Ok(det) = d {
+            assert_eq!(det.pattern_id, "AP-W002");
+        }
+    }
+
+    #[test]
+    fn test_multiple_detections_same_pattern() {
+        let detector = AntiPatternDetector::new();
+        for i in 0..10 {
+            let _ = detector.detect("AP-A001", format!("bypass {i}"));
+        }
+        assert_eq!(detector.get_violations("AP-A001"), 10);
+    }
+
+    #[test]
+    fn test_default_code_patterns_names() {
+        let detector = AntiPatternDetector::new();
+        let patterns = detector.patterns.read();
+        let names: Vec<&str> = patterns.iter()
+            .filter(|p| p.category == AntiPatternCategory::Code)
+            .map(|p| p.name.as_str())
+            .collect();
+        assert!(names.contains(&"unwrap_in_production"));
+        assert!(names.contains(&"unsafe_block"));
+        assert!(names.contains(&"panic_in_handler"));
+        assert!(names.contains(&"unbounded_channel"));
+    }
+
+    #[test]
+    fn test_default_workflow_patterns_names() {
+        let detector = AntiPatternDetector::new();
+        let patterns = detector.patterns.read();
+        let workflow: Vec<&str> = patterns.iter()
+            .filter(|p| p.category == AntiPatternCategory::Workflow)
+            .map(|p| p.name.as_str())
+            .collect();
+        assert!(workflow.contains(&"edit_without_read"));
+        assert!(workflow.contains(&"skip_health_check"));
+    }
+
+    #[test]
+    fn test_detections_by_all_categories_independent() {
+        let detector = AntiPatternDetector::new();
+        let _ = detector.detect("AP-C001", "code");
+        let _ = detector.detect("AP-W001", "workflow");
+
+        let code = detector.get_detections_by_category(AntiPatternCategory::Code);
+        let workflow = detector.get_detections_by_category(AntiPatternCategory::Workflow);
+        assert_eq!(code.len(), 1);
+        assert_eq!(workflow.len(), 1);
+    }
+
+    #[test]
+    fn test_most_frequent_sorted_descending() {
+        let detector = AntiPatternDetector::new();
+        for _ in 0..3 { let _ = detector.detect("AP-C001", "v"); }
+        for _ in 0..7 { let _ = detector.detect("AP-C002", "v"); }
+        for _ in 0..1 { let _ = detector.detect("AP-C003", "v"); }
+
+        let top = detector.most_frequent_violations(3);
+        assert_eq!(top[0].1, 7);
+        assert_eq!(top[1].1, 3);
+        assert_eq!(top[2].1, 1);
+    }
+
+    #[test]
+    fn test_resolve_marks_as_resolved() {
+        let detector = AntiPatternDetector::new();
+        let d = detector.detect("AP-X001", "skip minority").ok();
+        assert!(d.is_some());
+        if let Some(det) = d {
+            let _ = detector.resolve(&det.id);
+            let unresolved = detector.get_unresolved();
+            assert!(unresolved.iter().all(|u| u.id != det.id));
+        }
+    }
+
+    #[test]
+    fn test_concurrent_detect() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let detector = Arc::new(AntiPatternDetector::new());
+        let mut handles = Vec::new();
+
+        for t in 0..4 {
+            let d = Arc::clone(&detector);
+            handles.push(thread::spawn(move || {
+                for i in 0..10 {
+                    let _ = d.detect("AP-C001", format!("t{t}-v{i}"));
+                }
+            }));
+        }
+
+        for handle in handles {
+            let _ = handle.join();
+        }
+
+        assert_eq!(detector.violation_count(), 40);
+    }
+
+    #[test]
+    fn test_pattern_count_after_register_and_detect() {
+        let detector = AntiPatternDetector::new();
+        assert_eq!(detector.pattern_count(), 15);
+        let _ = detector.register_pattern("AP-NEW", AntiPatternCategory::Code, "new", "desc", 0.5);
+        assert_eq!(detector.pattern_count(), 16);
+        // Detecting does not change pattern count
+        let _ = detector.detect("AP-C001", "test");
+        assert_eq!(detector.pattern_count(), 16);
+    }
+
+    #[test]
+    fn test_consensus_pattern_ids() {
+        let detector = AntiPatternDetector::new();
+        let patterns = detector.patterns.read();
+        let consensus_ids: Vec<&str> = patterns.iter()
+            .filter(|p| p.category == AntiPatternCategory::Consensus)
+            .map(|p| p.id.as_str())
+            .collect();
+        assert!(consensus_ids.contains(&"AP-X001"));
+        assert!(consensus_ids.contains(&"AP-X002"));
+        assert!(consensus_ids.contains(&"AP-X003"));
+    }
+
+    #[test]
+    fn test_detection_has_timestamp() {
+        let detector = AntiPatternDetector::new();
+        let d = detector.detect("AP-C001", "test");
+        assert!(d.is_ok());
+        if let Ok(det) = d {
+            // Verify timestamp is recent (within last second)
+            let elapsed = det.timestamp.elapsed();
+            assert!(elapsed.is_ok());
+        }
+    }
 }

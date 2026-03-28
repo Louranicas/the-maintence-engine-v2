@@ -754,4 +754,305 @@ mod tests {
         let rate = tracker.valuable_dissent_rate();
         assert!((rate - 0.25).abs() < f64::EPSILON);
     }
+
+    // ---------------------------------------------------------------
+    // Additional tests to reach 50+
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_default_impl() {
+        let tracker = DissentTracker::default();
+        assert_eq!(tracker.total_dissent(), 0);
+    }
+
+    #[test]
+    fn test_total_dissent_increments() {
+        let tracker = DissentTracker::new();
+        for i in 0..5 {
+            let _ = tracker.record_dissent(
+                "prop-1", &format!("agent-{i}"), AgentRole::Validator, format!("reason {i}"),
+            );
+        }
+        assert_eq!(tracker.total_dissent(), 5);
+    }
+
+    #[test]
+    fn test_dissent_id_contains_proposal_and_agent() {
+        let tracker = DissentTracker::new();
+        let event = tracker.record_dissent(
+            "prop-1", "agent-29", AgentRole::Critic, "risky".into(),
+        ).unwrap_or_else(|_| unreachable!());
+        assert!(event.id.contains("prop-1"));
+        assert!(event.id.contains("agent-29"));
+    }
+
+    #[test]
+    fn test_dissent_agent_format() {
+        let tracker = DissentTracker::new();
+        let event = tracker.record_dissent(
+            "prop-1", "agent-29", AgentRole::Critic, "risk".into(),
+        ).unwrap_or_else(|_| unreachable!());
+        assert!(event.dissenting_agent.contains("agent-29"));
+        assert!(event.dissenting_agent.contains("Critic"));
+    }
+
+    #[test]
+    fn test_dissent_reason_preserved() {
+        let tracker = DissentTracker::new();
+        let event = tracker.record_dissent(
+            "prop-1", "agent-01", AgentRole::Validator, "specific concern about X".into(),
+        ).unwrap_or_else(|_| unreachable!());
+        assert_eq!(event.reason, "specific concern about X");
+    }
+
+    #[test]
+    fn test_dissent_outcome_initially_none() {
+        let tracker = DissentTracker::new();
+        let event = tracker.record_dissent(
+            "prop-1", "agent-01", AgentRole::Validator, "reason".into(),
+        ).unwrap_or_else(|_| unreachable!());
+        assert!(event.outcome.is_none());
+    }
+
+    #[test]
+    fn test_dissent_was_valuable_initially_none() {
+        let tracker = DissentTracker::new();
+        let event = tracker.record_dissent(
+            "prop-1", "agent-01", AgentRole::Validator, "reason".into(),
+        ).unwrap_or_else(|_| unreachable!());
+        assert!(event.was_valuable.is_none());
+    }
+
+    #[test]
+    fn test_mark_valuable_idempotent() {
+        let tracker = DissentTracker::new();
+        let event = tracker.record_dissent(
+            "prop-1", "agent-29", AgentRole::Critic, "risk".into(),
+        ).unwrap_or_else(|_| unreachable!());
+
+        let _ = tracker.mark_valuable(&event.id);
+        let _ = tracker.mark_valuable(&event.id);
+
+        // Should still be only 1 valuable
+        let valuable = tracker.get_valuable_dissent();
+        assert_eq!(valuable.len(), 1);
+    }
+
+    #[test]
+    fn test_dissent_for_proposal_empty() {
+        let tracker = DissentTracker::new();
+        let events = tracker.get_dissent_for_proposal("nonexistent");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_dissent_by_agent_empty() {
+        let tracker = DissentTracker::new();
+        let events = tracker.get_dissent_by_agent("nonexistent");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_get_critic_dissent_excludes_non_critics() {
+        let tracker = DissentTracker::new();
+        let _ = tracker.record_dissent(
+            "prop-1", "agent-01", AgentRole::Validator, "disagreement".into(),
+        );
+        let critic_events = tracker.get_critic_dissent();
+        assert!(critic_events.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_proposals_dissent() {
+        let tracker = DissentTracker::new();
+        for i in 0..3 {
+            let _ = tracker.record_dissent(
+                &format!("prop-{i}"), "agent-29", AgentRole::Critic, "concern".into(),
+            );
+        }
+        for i in 0..3 {
+            let events = tracker.get_dissent_for_proposal(&format!("prop-{i}"));
+            assert_eq!(events.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_analyze_dissent_valuable_count_zero() {
+        let tracker = DissentTracker::new();
+        let _ = tracker.record_dissent(
+            "prop-1", "agent-29", AgentRole::Critic, "risk".into(),
+        );
+        let analysis = tracker.analyze_dissent("prop-1").unwrap_or_else(|_| unreachable!());
+        assert_eq!(analysis.valuable_count, 0);
+    }
+
+    #[test]
+    fn test_analyze_dissent_common_reasons_sorted() {
+        let tracker = DissentTracker::new();
+        for _ in 0..3 {
+            let _ = tracker.record_dissent(
+                "prop-1", &format!("a-{}", tracker.total_dissent()),
+                AgentRole::Critic, "frequent_reason".into(),
+            );
+        }
+        let _ = tracker.record_dissent(
+            "prop-1", "a-unique", AgentRole::Validator, "rare_reason".into(),
+        );
+        let analysis = tracker.analyze_dissent("prop-1").unwrap_or_else(|_| unreachable!());
+        assert_eq!(analysis.common_reasons[0].0, "frequent_reason");
+        assert_eq!(analysis.common_reasons[0].1, 3);
+    }
+
+    #[test]
+    fn test_dissent_rate_single_proposal() {
+        let tracker = DissentTracker::new();
+        let _ = tracker.record_dissent(
+            "prop-1", "agent-01", AgentRole::Validator, "reason".into(),
+        );
+        // 1 event, 1 unique proposal -> rate = 1.0
+        let rate = tracker.dissent_rate();
+        assert!((rate - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_valuable_dissent_rate_none_valuable() {
+        let tracker = DissentTracker::new();
+        let _ = tracker.record_dissent(
+            "prop-1", "agent-01", AgentRole::Validator, "concern".into(),
+        );
+        assert!((tracker.valuable_dissent_rate()).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_valuable_dissent_rate_all_valuable() {
+        let tracker = DissentTracker::new();
+        let e1 = tracker.record_dissent(
+            "prop-1", "agent-29", AgentRole::Critic, "concern".into(),
+        ).unwrap_or_else(|_| unreachable!());
+        let _ = tracker.mark_valuable(&e1.id);
+        assert!((tracker.valuable_dissent_rate() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_get_valuable_dissent_empty() {
+        let tracker = DissentTracker::new();
+        assert!(tracker.get_valuable_dissent().is_empty());
+    }
+
+    #[test]
+    fn test_get_critic_dissent_empty() {
+        let tracker = DissentTracker::new();
+        assert!(tracker.get_critic_dissent().is_empty());
+    }
+
+    #[test]
+    fn test_record_dissent_multiple_roles() {
+        let tracker = DissentTracker::new();
+        let roles = [
+            AgentRole::Validator,
+            AgentRole::Explorer,
+            AgentRole::Critic,
+            AgentRole::Integrator,
+            AgentRole::Historian,
+        ];
+        for (i, role) in roles.iter().enumerate() {
+            let result = tracker.record_dissent(
+                "prop-1", &format!("agent-{i}"), *role, format!("reason {i}"),
+            );
+            assert!(result.is_ok());
+        }
+        assert_eq!(tracker.total_dissent(), 5);
+    }
+
+    #[test]
+    fn test_analyze_dissent_proposal_id_preserved() {
+        let tracker = DissentTracker::new();
+        let _ = tracker.record_dissent(
+            "my-proposal-42", "agent-29", AgentRole::Critic, "risk".into(),
+        );
+        let analysis = tracker.analyze_dissent("my-proposal-42")
+            .unwrap_or_else(|_| unreachable!());
+        assert_eq!(analysis.proposal_id, "my-proposal-42");
+    }
+
+    #[test]
+    fn test_dissent_capacity() {
+        let tracker = DissentTracker::new();
+        for i in 0..550 {
+            let _ = tracker.record_dissent(
+                &format!("prop-{}", i % 10),
+                &format!("agent-{i}"),
+                AgentRole::Validator,
+                format!("reason {i}"),
+            );
+        }
+        assert!(tracker.total_dissent() <= MAX_DISSENT_EVENTS);
+    }
+
+    #[test]
+    fn test_multiple_agents_same_proposal() {
+        let tracker = DissentTracker::new();
+        let _ = tracker.record_dissent("prop-1", "agent-01", AgentRole::Validator, "r1".into());
+        let _ = tracker.record_dissent("prop-1", "agent-02", AgentRole::Explorer, "r2".into());
+        let _ = tracker.record_dissent("prop-1", "agent-03", AgentRole::Critic, "r3".into());
+        let _ = tracker.record_dissent("prop-1", "agent-04", AgentRole::Integrator, "r4".into());
+
+        let events = tracker.get_dissent_for_proposal("prop-1");
+        assert_eq!(events.len(), 4);
+    }
+
+    #[test]
+    fn test_single_agent_multiple_proposals() {
+        let tracker = DissentTracker::new();
+        for i in 0..5 {
+            let _ = tracker.record_dissent(
+                &format!("prop-{i}"), "agent-29", AgentRole::Critic, "concern".into(),
+            );
+        }
+        let events = tracker.get_dissent_by_agent("agent-29");
+        assert_eq!(events.len(), 5);
+    }
+
+    #[test]
+    fn test_analyze_dissent_role_breakdown() {
+        let tracker = DissentTracker::new();
+        let _ = tracker.record_dissent("prop-1", "a1", AgentRole::Critic, "r1".into());
+        let _ = tracker.record_dissent("prop-1", "a2", AgentRole::Critic, "r2".into());
+        let _ = tracker.record_dissent("prop-1", "a3", AgentRole::Validator, "r3".into());
+
+        let analysis = tracker.analyze_dissent("prop-1").unwrap_or_else(|_| unreachable!());
+        assert_eq!(analysis.dissent_by_role.len(), 2);
+    }
+
+    #[test]
+    fn test_dissent_has_timestamp() {
+        let tracker = DissentTracker::new();
+        let event = tracker.record_dissent(
+            "prop-1", "agent-01", AgentRole::Validator, "reason".into(),
+        ).unwrap_or_else(|_| unreachable!());
+        let elapsed = event.timestamp.elapsed();
+        assert!(elapsed.is_ok());
+    }
+
+    #[test]
+    fn test_validator_dissent_not_in_critic_filter() {
+        let tracker = DissentTracker::new();
+        let _ = tracker.record_dissent(
+            "prop-1", "agent-01", AgentRole::Validator, "disagreement".into(),
+        );
+        let _ = tracker.record_dissent(
+            "prop-1", "agent-21", AgentRole::Explorer, "alternative view".into(),
+        );
+        let critic_events = tracker.get_critic_dissent();
+        assert!(critic_events.is_empty());
+    }
+
+    #[test]
+    fn test_historian_dissent() {
+        let tracker = DissentTracker::new();
+        let event = tracker.record_dissent(
+            "prop-1", "agent-39", AgentRole::Historian, "precedent says no".into(),
+        ).unwrap_or_else(|_| unreachable!());
+        assert!(event.dissenting_agent.contains("Historian"));
+    }
 }

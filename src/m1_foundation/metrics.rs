@@ -1976,4 +1976,120 @@ mod tests {
         assert!(tensor.validate().is_ok());
         assert!((tensor.health_score - 0.8).abs() < 0.001);
     }
+
+    // ====================================================================
+    // Edge case tests — empty label names, histogram no obs, delta no prior
+    // ====================================================================
+
+    #[test]
+    fn test_labels_with_empty_key_and_value() {
+        let labels = Labels::new().with("", "");
+        let formatted = labels.prometheus_format();
+        // Empty key/value still formatted as a label pair
+        assert!(formatted.contains("=\"\""));
+        assert!(!labels.is_empty());
+    }
+
+    #[test]
+    fn test_histogram_no_observations_returns_zero() -> crate::Result<()> {
+        let registry = create_registry();
+        let histogram = registry.register_histogram(
+            "test_no_obs",
+            "No observations",
+            &["endpoint"],
+            &[0.1, 0.5, 1.0],
+        )?;
+        let labels = Labels::new().with("endpoint", "/test");
+
+        // No observations recorded — count and sum should be zero
+        assert_eq!(histogram.get_count(&labels), 0);
+        assert!((histogram.get_sum(&labels) - 0.0).abs() < f64::EPSILON);
+
+        // get_buckets returns empty vec for unseen labels
+        let buckets = histogram.get_buckets(&labels);
+        assert!(buckets.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_snapshot_delta_with_no_prior_snapshot() {
+        // prev has no counters at all; next has some — all treated as new deltas
+        let prev = MetricSnapshot {
+            timestamp: 100,
+            ..Default::default()
+        };
+        let mut next = MetricSnapshot {
+            timestamp: 200,
+            ..Default::default()
+        };
+        let mut counter_vals = HashMap::new();
+        counter_vals.insert(String::new(), 42);
+        next.counters
+            .insert("brand_new_counter".to_string(), counter_vals);
+
+        let mut gauge_vals = HashMap::new();
+        gauge_vals.insert(String::new(), 0.75);
+        next.gauges
+            .insert("brand_new_gauge".to_string(), gauge_vals);
+
+        let delta = snapshot_delta(&prev, &next);
+        // Counter delta should be 42 (all new)
+        assert_eq!(delta.counter_deltas.get("brand_new_counter"), Some(&42));
+        // Gauge delta: prev has no matching gauge, so gauge_deltas should be empty
+        // (the function only computes gauge deltas when both prev and next have the key)
+        assert!(delta.gauge_deltas.is_empty());
+        assert_eq!(delta.duration_between, 100);
+    }
+
+    #[test]
+    fn test_concurrent_gauge_updates() -> crate::Result<()> {
+        use std::thread;
+
+        let registry = Arc::new(create_registry());
+        registry.register_gauge("concurrent_gauge", "Test concurrent gauge", &["worker"])?;
+
+        let mut handles = vec![];
+        for i in 0..4 {
+            let r = Arc::clone(&registry);
+            handles.push(thread::spawn(move || {
+                if let Some(gauge) = r.get_gauge("concurrent_gauge") {
+                    let label = Labels::new().with("worker", i.to_string());
+                    gauge.set(&label, f64::from(i) * 10.0);
+                    gauge.inc(&label);
+                    gauge.dec(&label);
+                    // Final value should be i * 10.0
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().ok();
+        }
+
+        if let Some(gauge) = registry.get_gauge("concurrent_gauge") {
+            for i in 0..4 {
+                let label = Labels::new().with("worker", i.to_string());
+                let val = gauge.get(&label);
+                assert!(
+                    (val - f64::from(i) * 10.0).abs() < 0.01,
+                    "Worker {i} gauge should be {} but was {val}",
+                    f64::from(i) * 10.0
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_registry_duplicate_gauge_and_histogram_errors() -> crate::Result<()> {
+        let registry = create_registry();
+        registry.register_gauge("dup_gauge", "First", &[])?;
+        let result = registry.register_gauge("dup_gauge", "Second", &[]);
+        assert!(result.is_err());
+
+        registry.register_histogram("dup_hist", "First", &[], &[1.0])?;
+        let result = registry.register_histogram("dup_hist", "Second", &[], &[1.0]);
+        assert!(result.is_err());
+        Ok(())
+    }
 }

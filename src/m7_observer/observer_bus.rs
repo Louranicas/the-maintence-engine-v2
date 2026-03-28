@@ -972,4 +972,75 @@ mod tests {
         assert_eq!(bus.config().max_messages_per_channel, 10);
         assert!(bus.config().debug_logging);
     }
+
+    // ---------------------------------------------------------------
+    // Additional tests to reach 50+
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_last_message_id_after_publish() {
+        let bus = make_bus();
+        let _r = bus.publish_correlation("{}");
+        assert_eq!(bus.last_message_id(), 0);
+        let _r = bus.publish_correlation("{}");
+        assert_eq!(bus.last_message_id(), 1);
+    }
+
+    #[test]
+    fn test_clear_resets_next_id() {
+        let bus = make_bus();
+        let _r = bus.publish_correlation("{}");
+        let _r = bus.publish_correlation("{}");
+        bus.clear();
+        // After clear, next id restarts from 0
+        let _r = bus.publish_correlation("{}");
+        let msgs = bus.get_messages("correlation", 1);
+        assert_eq!(msgs[0].id, 0);
+    }
+
+    #[test]
+    fn test_publish_to_nonexistent_channel_creates_it() {
+        let bus = make_bus();
+        let result = bus.publish(
+            "dynamic",
+            ObserverSource::Coordinator,
+            ObserverMessageType::PhaseTransition,
+            "{}",
+        );
+        assert!(result.is_ok());
+        assert_eq!(bus.channel_message_count("dynamic"), 1);
+    }
+
+    #[test]
+    fn test_prune_empty_channels() {
+        let bus = make_bus();
+        let past = Utc::now() - chrono::Duration::hours(1);
+        let pruned = bus.prune_before(past);
+        assert_eq!(pruned, 0);
+    }
+
+    #[test]
+    fn test_record_error_increments() {
+        let bus = make_bus();
+        for _ in 0..5 {
+            bus.record_error();
+        }
+        assert_eq!(bus.stats().handler_errors, 5);
+    }
+
+    #[test]
+    fn test_message_counts_all_zero_initially() {
+        let bus = make_bus();
+        let (c, e, ev) = bus.message_counts();
+        assert_eq!(c, 0);
+        assert_eq!(e, 0);
+        assert_eq!(ev, 0);
+    }
+
+    #[test]
+    fn test_recent_messages_empty_bus() {
+        let bus = make_bus();
+        let recent = bus.recent_messages(60);
+        assert!(recent.is_empty());
+    }
 }
