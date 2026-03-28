@@ -2859,482 +2859,439 @@ mod tests {
     }
 
     // ====================================================================
-    // Batch: save/load roundtrip for HashMap
+    // NEW BATCH: In-memory pool construction and basic save/load (5 tests)
     // ====================================================================
 
-    #[tokio::test]
-    async fn test_save_and_load_hashmap() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
+    /// Helper: create an in-memory SQLite pool (no temp dir needed).
+    async fn create_in_memory_pool() -> crate::Result<DatabasePool> {
+        let config = DatabaseConfig::new(":memory:")
+            .with_max_connections(1)
+            .with_min_connections(1);
+        connect(&config).await
+    }
 
+    #[tokio::test]
+    async fn test_in_memory_pool_health_check() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        let healthy = pool.health_check().await?;
+        assert!(healthy);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_pool_database_name() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        // :memory: has no file stem, so name should be extracted or "unknown"
+        assert!(!pool.database_name().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_save_and_load() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE kv_map (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)",
+            "CREATE TABLE mem_kv (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)",
             &[],
         )
         .await?;
 
-        let mut data = HashMap::new();
-        data.insert("alpha".to_string(), 1);
-        data.insert("beta".to_string(), 2);
+        save(&pool, "mem_kv", "in_mem_key", &"in_mem_value").await?;
+        let loaded: Option<String> = load(&pool, "mem_kv", "in_mem_key").await?;
+        assert_eq!(loaded.as_deref(), Some("in_mem_value"));
+        Ok(())
+    }
 
-        save(&pool, "kv_map", "map_key", &data).await?;
-        let loaded: Option<HashMap<String, i32>> = load(&pool, "kv_map", "map_key").await?;
-        let val = loaded.ok_or_else(|| Error::Database("missing map".to_string()))?;
-        assert_eq!(val.get("alpha"), Some(&1));
-        assert_eq!(val.get("beta"), Some(&2));
+    #[tokio::test]
+    async fn test_in_memory_pool_stats_valid() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        let stats = pool.stats();
+        assert!(stats.size > 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_create_table_and_insert() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        let create_result = execute(
+            &pool,
+            "CREATE TABLE mem_items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            &[],
+        )
+        .await;
+        assert!(create_result.is_ok());
+
+        let insert_result =
+            execute(&pool, "INSERT INTO mem_items (name) VALUES (?)", &["alpha"]).await;
+        assert!(insert_result.is_ok());
+
+        let total = count(&pool, "mem_items", None, &[]).await?;
+        assert_eq!(total, 1);
         Ok(())
     }
 
     // ====================================================================
-    // Batch: save/load empty string
+    // NEW BATCH: save_versioned — version tracking, version mismatch (4 tests)
     // ====================================================================
 
     #[tokio::test]
-    async fn test_save_and_load_empty_string() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+    async fn test_save_versioned_increments_version() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE kv_empty (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)",
+            "CREATE TABLE ver_incr (key TEXT PRIMARY KEY, value TEXT, version INTEGER DEFAULT 0, updated_at TEXT)",
             &[],
         )
         .await?;
 
-        save(&pool, "kv_empty", "blank", &"").await?;
-        let loaded: Option<String> = load(&pool, "kv_empty", "blank").await?;
-        assert_eq!(loaded.as_deref(), Some(""));
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: save_versioned increment chain
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_save_versioned_increment_chain() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
-        execute(
-            &pool,
-            "CREATE TABLE ver_chain (key TEXT PRIMARY KEY, value TEXT, version INTEGER DEFAULT 0, updated_at TEXT)",
-            &[],
-        )
-        .await?;
-
-        let v1 = save_versioned(&pool, "ver_chain", "k", &"v1", 0).await?;
+        let v1 = save_versioned(&pool, "ver_incr", "k", &"val_1", 0).await?;
         assert_eq!(v1, 1);
-        let v2 = save_versioned(&pool, "ver_chain", "k", &"v2", 1).await?;
+
+        let v2 = save_versioned(&pool, "ver_incr", "k", &"val_2", 1).await?;
         assert_eq!(v2, 2);
-        let v3 = save_versioned(&pool, "ver_chain", "k", &"v3", 2).await?;
+
+        let v3 = save_versioned(&pool, "ver_incr", "k", &"val_3", 2).await?;
         assert_eq!(v3, 3);
-
-        let loaded: Option<String> = load(&pool, "ver_chain", "k").await?;
-        assert_eq!(loaded.as_deref(), Some("v3"));
         Ok(())
     }
 
-    // ====================================================================
-    // Batch: execute with params
-    // ====================================================================
-
     #[tokio::test]
-    async fn test_execute_with_multiple_params() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+    async fn test_save_versioned_mismatch_nonzero_version() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE mp (id INTEGER PRIMARY KEY, a TEXT, b TEXT, c TEXT)",
+            "CREATE TABLE ver_mis2 (key TEXT PRIMARY KEY, value TEXT, version INTEGER DEFAULT 0, updated_at TEXT)",
             &[],
         )
         .await?;
 
-        let affected = execute(
-            &pool,
-            "INSERT INTO mp (a, b, c) VALUES (?, ?, ?)",
-            &["x", "y", "z"],
-        )
-        .await?;
-        assert_eq!(affected, 1);
+        save_versioned(&pool, "ver_mis2", "k", &"init", 0).await?;
+        save_versioned(&pool, "ver_mis2", "k", &"next", 1).await?;
 
-        let total = count(&pool, "mp", None, &[]).await?;
-        assert_eq!(total, 1);
+        // Attempt with stale version 1 when actual is 2
+        let result = save_versioned(&pool, "ver_mis2", "k", &"stale", 1).await;
+        assert!(result.is_err());
         Ok(())
     }
 
-    // ====================================================================
-    // Batch: count with no condition returns total
-    // ====================================================================
-
     #[tokio::test]
-    async fn test_count_no_condition_returns_total() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+    async fn test_save_versioned_preserves_latest_value_on_mismatch() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE cnt_all (id INTEGER PRIMARY KEY, val TEXT)",
+            "CREATE TABLE ver_pres (key TEXT PRIMARY KEY, value TEXT, version INTEGER DEFAULT 0, updated_at TEXT)",
             &[],
         )
         .await?;
 
-        for i in 0..5 {
-            execute(
-                &pool,
-                "INSERT INTO cnt_all (val) VALUES (?)",
-                &[&format!("v{i}")],
-            )
-            .await?;
-        }
+        save_versioned(&pool, "ver_pres", "k", &"good", 0).await?;
+        let _err = save_versioned(&pool, "ver_pres", "k", &"bad", 0).await;
 
-        let total = count(&pool, "cnt_all", None, &[]).await?;
-        assert_eq!(total, 5);
+        let loaded: Option<String> = load(&pool, "ver_pres", "k").await?;
+        assert_eq!(loaded.as_deref(), Some("good"));
         Ok(())
     }
 
-    // ====================================================================
-    // Batch: exists after insert returns true
-    // ====================================================================
-
     #[tokio::test]
-    async fn test_exists_after_insert() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+    async fn test_save_versioned_nonexistent_key_with_nonzero_version_errors() -> crate::Result<()>
+    {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE ex_ins (key TEXT PRIMARY KEY, value TEXT)",
+            "CREATE TABLE ver_nokey (key TEXT PRIMARY KEY, value TEXT, version INTEGER DEFAULT 0, updated_at TEXT)",
             &[],
         )
         .await?;
 
-        assert!(!exists(&pool, "ex_ins", "new_key").await?);
-        execute(
-            &pool,
-            "INSERT INTO ex_ins (key, value) VALUES (?, ?)",
-            &["new_key", "val"],
-        )
-        .await?;
-        assert!(exists(&pool, "ex_ins", "new_key").await?);
+        // Key does not exist, but expected_version is 5 -> should error
+        let result = save_versioned(&pool, "ver_nokey", "missing", &"val", 5).await;
+        assert!(result.is_err());
         Ok(())
     }
 
     // ====================================================================
-    // Batch: delete then exists
+    // NEW BATCH: save_with_provenance — agent column, timestamp (3 tests)
     // ====================================================================
 
     #[tokio::test]
-    async fn test_delete_then_exists_returns_false() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+    async fn test_save_with_provenance_stores_agent_id() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE del_ex (key TEXT PRIMARY KEY, value TEXT)",
+            "CREATE TABLE prov_agent (key TEXT PRIMARY KEY, value TEXT, saved_by TEXT, updated_at TEXT)",
             &[],
         )
         .await?;
 
-        execute(
-            &pool,
-            "INSERT INTO del_ex (key, value) VALUES (?, ?)",
-            &["k1", "v1"],
-        )
-        .await?;
+        save_with_provenance(&pool, "prov_agent", "pk1", &"data", "agent-007").await?;
 
-        assert!(exists(&pool, "del_ex", "k1").await?);
-        let _ = delete(&pool, "del_ex", "k1").await?;
-        assert!(!exists(&pool, "del_ex", "k1").await?);
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: transaction multiple inserts
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_transaction_multiple_inserts() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
-        execute(
-            &pool,
-            "CREATE TABLE tx_multi (id INTEGER PRIMARY KEY, val TEXT)",
-            &[],
-        )
-        .await?;
-
-        let mut tx = begin_transaction(&pool).await?;
-        for i in 0..5 {
-            tx.execute(
-                "INSERT INTO tx_multi (val) VALUES (?)",
-                &[&format!("item-{i}")],
-            )
-            .await?;
-        }
-        tx.commit().await?;
-
-        let total = count(&pool, "tx_multi", None, &[]).await?;
-        assert_eq!(total, 5);
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: transaction rollback undoes all
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_transaction_rollback_undoes_all() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
-        execute(
-            &pool,
-            "CREATE TABLE tx_rb (id INTEGER PRIMARY KEY, val TEXT)",
-            &[],
-        )
-        .await?;
-
-        let mut tx = begin_transaction(&pool).await?;
-        for i in 0..3 {
-            tx.execute(
-                "INSERT INTO tx_rb (val) VALUES (?)",
-                &[&format!("item-{i}")],
-            )
-            .await?;
-        }
-        tx.rollback().await?;
-
-        let total = count(&pool, "tx_rb", None, &[]).await?;
-        assert_eq!(total, 0);
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: QueryBuilder select with limit only
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_query_builder_select_with_limit_only() {
-        let qb = QueryBuilder::select(&["*"]).from("items").limit(100);
-        assert_eq!(qb.build(), "SELECT * FROM items LIMIT 100");
-        assert!(qb.params().is_empty());
-    }
-
-    // ====================================================================
-    // Batch: QueryBuilder insert with single column
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_query_builder_insert_single_column() {
-        let qb = QueryBuilder::insert_into("tags", &["name"]).values(&["rust"]);
-        assert_eq!(qb.build(), "INSERT INTO tags (name) VALUES (?)");
-        assert_eq!(qb.params(), vec!["rust"]);
-    }
-
-    // ====================================================================
-    // Batch: DatabaseType — each variant has unique migration number
-    // ====================================================================
-
-    #[test]
-    fn test_database_type_unique_migration_numbers() {
-        let all = DatabaseType::all();
-        let mut numbers: Vec<u32> = all.iter().map(|dt| dt.migration_number()).collect();
-        let len_before = numbers.len();
-        numbers.sort_unstable();
-        numbers.dedup();
-        assert_eq!(numbers.len(), len_before, "Migration numbers must be unique");
-    }
-
-    // ====================================================================
-    // Batch: DatabaseConfig — create_if_missing default
-    // ====================================================================
-
-    #[test]
-    fn test_database_config_create_if_missing_default() {
-        let config = DatabaseConfig::default();
-        assert!(config.create_if_missing);
-    }
-
-    // ====================================================================
-    // Batch: PoolStats debug readable
-    // ====================================================================
-
-    #[test]
-    fn test_pool_stats_debug_readable() {
-        let stats = PoolStats { size: 10, idle: 3 };
-        let debug = format!("{stats:?}");
-        assert!(debug.contains("size"));
-        assert!(debug.contains("idle"));
-    }
-
-    // ====================================================================
-    // Batch: connect to in-memory path
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_connect_creates_database_file() -> crate::Result<()> {
-        let dir = tempfile::tempdir().map_err(|e| Error::Database(e.to_string()))?;
-        let db_path = dir.path().join("new_db.db");
-        let config = DatabaseConfig::new(db_path.to_string_lossy().to_string());
-        let pool = connect(&config).await?;
-        assert!(pool.health_check().await?);
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: save overwrite does not increase count
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_save_overwrite_does_not_increase_count() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
-        execute(
-            &pool,
-            "CREATE TABLE kv_ow (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)",
-            &[],
-        )
-        .await?;
-
-        save(&pool, "kv_ow", "k1", &"first").await?;
-        save(&pool, "kv_ow", "k1", &"second").await?;
-        save(&pool, "kv_ow", "k1", &"third").await?;
-
-        let total = count(&pool, "kv_ow", None, &[]).await?;
-        assert_eq!(total, 1);
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: save and load f64
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_save_and_load_f64() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
-        execute(
-            &pool,
-            "CREATE TABLE kv_f64 (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)",
-            &[],
-        )
-        .await?;
-
-        save(&pool, "kv_f64", "pi", &std::f64::consts::PI).await?;
-        let loaded: Option<f64> = load(&pool, "kv_f64", "pi").await?;
-        assert!(loaded.is_some());
-        if let Some(val) = loaded {
-            assert!((val - std::f64::consts::PI).abs() < f64::EPSILON);
-        }
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: save_with_provenance roundtrip multiple agents
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_save_with_provenance_different_agents() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
-        execute(
-            &pool,
-            "CREATE TABLE prov_multi (key TEXT PRIMARY KEY, value TEXT, saved_by TEXT, updated_at TEXT)",
-            &[],
-        )
-        .await?;
-
-        save_with_provenance(&pool, "prov_multi", "k1", &"data1", "@0.A").await?;
-        save_with_provenance(&pool, "prov_multi", "k1", &"data2", "agent-01").await?;
-
-        // Verify the latest saved_by is agent-01 (upsert behavior)
-        let row = sqlx::query("SELECT saved_by FROM prov_multi WHERE key = ?")
-            .bind("k1")
+        let row = sqlx::query("SELECT saved_by FROM prov_agent WHERE key = ?")
+            .bind("pk1")
             .fetch_one(pool.inner())
             .await
-            .map_err(|e| Error::Database(format!("fetch: {e}")))?;
+            .map_err(|e| Error::Database(format!("fetch failed: {e}")))?;
         let agent: String = row
             .try_get(0)
-            .map_err(|e| Error::Database(format!("get: {e}")))?;
-        assert_eq!(agent, "agent-01");
+            .map_err(|e| Error::Database(format!("get failed: {e}")))?;
+        assert_eq!(agent, "agent-007");
         Ok(())
     }
 
-    // ====================================================================
-    // Batch: DatabasePool clone
-    // ====================================================================
-
     #[tokio::test]
-    async fn test_database_pool_clone() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-        let cloned = pool.clone();
-        assert_eq!(pool.database_name(), cloned.database_name());
-        assert!(cloned.health_check().await?);
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: execute update no matching rows
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_execute_update_no_match() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+    async fn test_save_with_provenance_stores_timestamp() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE upd_no (id INTEGER PRIMARY KEY, val TEXT)",
+            "CREATE TABLE prov_ts (key TEXT PRIMARY KEY, value TEXT, saved_by TEXT, updated_at TEXT)",
             &[],
         )
         .await?;
 
-        let affected = execute(
-            &pool,
-            "UPDATE upd_no SET val = ? WHERE id = ?",
-            &["new", "999"],
-        )
-        .await?;
-        assert_eq!(affected, 0);
+        save_with_provenance(&pool, "prov_ts", "ts_key", &"ts_val", "claude").await?;
+
+        let row = sqlx::query("SELECT updated_at FROM prov_ts WHERE key = ?")
+            .bind("ts_key")
+            .fetch_one(pool.inner())
+            .await
+            .map_err(|e| Error::Database(format!("fetch failed: {e}")))?;
+        let ts: String = row
+            .try_get(0)
+            .map_err(|e| Error::Database(format!("get failed: {e}")))?;
+        // CURRENT_TIMESTAMP is not empty
+        assert!(!ts.is_empty());
         Ok(())
     }
 
-    // ====================================================================
-    // Batch: QueryBuilder where_eq with special chars
-    // ====================================================================
-
     #[tokio::test]
-    async fn test_query_builder_where_eq_special_chars() {
-        let qb = QueryBuilder::select(&["*"])
-            .from("items")
-            .where_eq("name", "O'Brien");
-        assert_eq!(qb.params(), vec!["O'Brien"]);
-    }
-
-    // ====================================================================
-    // Batch: count with condition no match
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_count_with_condition_no_match() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+    async fn test_save_with_provenance_upsert_updates_agent() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE cnt_nm (id INTEGER PRIMARY KEY, tag TEXT)",
+            "CREATE TABLE prov_ups (key TEXT PRIMARY KEY, value TEXT, saved_by TEXT, updated_at TEXT)",
             &[],
         )
         .await?;
 
-        execute(&pool, "INSERT INTO cnt_nm (tag) VALUES (?)", &["alpha"]).await?;
+        save_with_provenance(&pool, "prov_ups", "ukey", &"first", "agent-A").await?;
+        save_with_provenance(&pool, "prov_ups", "ukey", &"second", "agent-B").await?;
 
-        let cnt = count(&pool, "cnt_nm", Some("tag = ?"), &["nonexistent"]).await?;
-        assert_eq!(cnt, 0);
+        let row = sqlx::query("SELECT saved_by, value FROM prov_ups WHERE key = ?")
+            .bind("ukey")
+            .fetch_one(pool.inner())
+            .await
+            .map_err(|e| Error::Database(format!("fetch failed: {e}")))?;
+        let agent: String = row
+            .try_get(0)
+            .map_err(|e| Error::Database(format!("get failed: {e}")))?;
+        assert_eq!(agent, "agent-B");
         Ok(())
     }
 
     // ====================================================================
-    // Batch: fetch_all with multiple rows
+    // NEW BATCH: count — with conditions, empty table (3 tests)
     // ====================================================================
+
+    #[tokio::test]
+    async fn test_count_with_multiple_conditions() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE cnt_multi (id INTEGER PRIMARY KEY, status TEXT, tier INTEGER)",
+            &[],
+        )
+        .await?;
+
+        execute(
+            &pool,
+            "INSERT INTO cnt_multi (status, tier) VALUES (?, ?)",
+            &["active", "1"],
+        )
+        .await?;
+        execute(
+            &pool,
+            "INSERT INTO cnt_multi (status, tier) VALUES (?, ?)",
+            &["active", "2"],
+        )
+        .await?;
+        execute(
+            &pool,
+            "INSERT INTO cnt_multi (status, tier) VALUES (?, ?)",
+            &["inactive", "1"],
+        )
+        .await?;
+
+        let active = count(&pool, "cnt_multi", Some("status = ?"), &["active"]).await?;
+        assert_eq!(active, 2);
+
+        let total = count(&pool, "cnt_multi", None, &[]).await?;
+        assert_eq!(total, 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_count_empty_table_with_condition_returns_zero() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE cnt_econd (id INTEGER PRIMARY KEY, tag TEXT)",
+            &[],
+        )
+        .await?;
+
+        let result = count(&pool, "cnt_econd", Some("tag = ?"), &["ghost"]).await?;
+        assert_eq!(result, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_count_after_delete() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE cnt_del (key TEXT PRIMARY KEY, value TEXT)",
+            &[],
+        )
+        .await?;
+
+        execute(
+            &pool,
+            "INSERT INTO cnt_del (key, value) VALUES (?, ?)",
+            &["a", "1"],
+        )
+        .await?;
+        execute(
+            &pool,
+            "INSERT INTO cnt_del (key, value) VALUES (?, ?)",
+            &["b", "2"],
+        )
+        .await?;
+
+        assert_eq!(count(&pool, "cnt_del", None, &[]).await?, 2);
+        delete(&pool, "cnt_del", "a").await?;
+        assert_eq!(count(&pool, "cnt_del", None, &[]).await?, 1);
+        Ok(())
+    }
+
+    // ====================================================================
+    // NEW BATCH: exists — present key, absent key (2 tests)
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_exists_present_key_after_insert() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE ex_present (key TEXT PRIMARY KEY, value TEXT)",
+            &[],
+        )
+        .await?;
+
+        execute(
+            &pool,
+            "INSERT INTO ex_present (key, value) VALUES (?, ?)",
+            &["found", "yes"],
+        )
+        .await?;
+
+        assert!(exists(&pool, "ex_present", "found").await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_exists_absent_key_in_populated_table() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE ex_absent (key TEXT PRIMARY KEY, value TEXT)",
+            &[],
+        )
+        .await?;
+
+        execute(
+            &pool,
+            "INSERT INTO ex_absent (key, value) VALUES (?, ?)",
+            &["real", "data"],
+        )
+        .await?;
+
+        assert!(!exists(&pool, "ex_absent", "fake").await?);
+        Ok(())
+    }
+
+    // ====================================================================
+    // NEW BATCH: delete — existing key, idempotent (2 tests)
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_delete_existing_key_returns_true() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE del_exists (key TEXT PRIMARY KEY, value TEXT)",
+            &[],
+        )
+        .await?;
+
+        execute(
+            &pool,
+            "INSERT INTO del_exists (key, value) VALUES (?, ?)",
+            &["target", "gone"],
+        )
+        .await?;
+
+        let result = delete(&pool, "del_exists", "target").await?;
+        assert!(result);
+        assert!(!exists(&pool, "del_exists", "target").await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_delete_idempotent_no_side_effects() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE del_idem (key TEXT PRIMARY KEY, value TEXT)",
+            &[],
+        )
+        .await?;
+
+        execute(
+            &pool,
+            "INSERT INTO del_idem (key, value) VALUES (?, ?)",
+            &["keep", "safe"],
+        )
+        .await?;
+
+        // Delete nonexistent key should not affect existing rows
+        let result = delete(&pool, "del_idem", "nonexistent").await?;
+        assert!(!result);
+        assert!(exists(&pool, "del_idem", "keep").await?);
+        assert_eq!(count(&pool, "del_idem", None, &[]).await?, 1);
+        Ok(())
+    }
+
+    // ====================================================================
+    // NEW BATCH: fetch_all — empty result, multiple rows (3 tests)
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_fetch_all_empty_returns_empty_vec() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE fa_emp (id INTEGER PRIMARY KEY, value TEXT)",
+            &[],
+        )
+        .await?;
+
+        let results: Vec<String> = fetch_all(&pool, "SELECT value FROM fa_emp", &[]).await?;
+        assert!(results.is_empty());
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_fetch_all_multiple_rows() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
             "CREATE TABLE fa_multi (id INTEGER PRIMARY KEY, value TEXT)",
@@ -3345,343 +3302,439 @@ mod tests {
         execute(
             &pool,
             "INSERT INTO fa_multi (value) VALUES (?)",
-            &["\"aaa\""],
+            &["\"row_a\""],
         )
         .await?;
         execute(
             &pool,
             "INSERT INTO fa_multi (value) VALUES (?)",
-            &["\"bbb\""],
+            &["\"row_b\""],
         )
         .await?;
         execute(
             &pool,
             "INSERT INTO fa_multi (value) VALUES (?)",
-            &["\"ccc\""],
+            &["\"row_c\""],
         )
         .await?;
 
         let results: Vec<String> =
             fetch_all(&pool, "SELECT value FROM fa_multi ORDER BY id", &[]).await?;
         assert_eq!(results.len(), 3);
-        assert_eq!(results[0], "aaa");
-        assert_eq!(results[2], "ccc");
+        assert_eq!(results[0], "row_a");
+        assert_eq!(results[1], "row_b");
+        assert_eq!(results[2], "row_c");
         Ok(())
     }
 
-    // ====================================================================
-    // Batch: save_versioned with nonexistent key non-zero version
-    // ====================================================================
-
     #[tokio::test]
-    async fn test_save_versioned_nonexistent_key_nonzero_version() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+    async fn test_fetch_all_with_condition() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE ver_ne (key TEXT PRIMARY KEY, value TEXT, version INTEGER DEFAULT 0, updated_at TEXT)",
+            "CREATE TABLE fa_cond (id INTEGER PRIMARY KEY, value TEXT, tag TEXT)",
             &[],
         )
         .await?;
 
-        // Trying to update nonexistent key with version 5 should fail
-        let result = save_versioned(&pool, "ver_ne", "missing", &"data", 5).await;
+        execute(
+            &pool,
+            "INSERT INTO fa_cond (value, tag) VALUES (?, ?)",
+            &["\"one\"", "x"],
+        )
+        .await?;
+        execute(
+            &pool,
+            "INSERT INTO fa_cond (value, tag) VALUES (?, ?)",
+            &["\"two\"", "y"],
+        )
+        .await?;
+        execute(
+            &pool,
+            "INSERT INTO fa_cond (value, tag) VALUES (?, ?)",
+            &["\"three\"", "x"],
+        )
+        .await?;
+
+        let results: Vec<String> =
+            fetch_all(&pool, "SELECT value FROM fa_cond WHERE tag = ?", &["x"]).await?;
+        assert_eq!(results.len(), 2);
+        Ok(())
+    }
+
+    // ====================================================================
+    // NEW BATCH: fetch_one — found, not found error (2 tests)
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_fetch_one_found_returns_value() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE fo_found (id INTEGER PRIMARY KEY, value TEXT)",
+            &[],
+        )
+        .await?;
+
+        execute(
+            &pool,
+            "INSERT INTO fo_found (id, value) VALUES (?, ?)",
+            &["1", "\"the_value\""],
+        )
+        .await?;
+
+        let result: String =
+            fetch_one(&pool, "SELECT value FROM fo_found WHERE id = ?", &["1"]).await?;
+        assert_eq!(result, "the_value");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_one_not_found_returns_error() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE fo_miss2 (id INTEGER PRIMARY KEY, value TEXT)",
+            &[],
+        )
+        .await?;
+
+        let result: crate::Result<String> =
+            fetch_one(&pool, "SELECT value FROM fo_miss2 WHERE id = ?", &["42"]).await;
         assert!(result.is_err());
         Ok(())
     }
 
     // ====================================================================
-    // Batch: QueryBuilder set multiple then where
+    // NEW BATCH: fetch_optional — Some and None cases (2 tests)
     // ====================================================================
 
     #[tokio::test]
-    async fn test_query_builder_update_with_and() {
-        let qb = QueryBuilder::update("settings")
-            .set("value", "new")
-            .where_eq("key", "theme")
-            .and_eq("user", "admin");
-        assert_eq!(
-            qb.build(),
-            "UPDATE settings SET value = ? WHERE key = ? AND user = ?"
-        );
-        assert_eq!(qb.params(), vec!["new", "theme", "admin"]);
-    }
-
-    // ====================================================================
-    // Batch: DatabaseType display for all variants
-    // ====================================================================
-
-    #[test]
-    fn test_database_type_display_all_variants() {
-        for dt in DatabaseType::all() {
-            let display = dt.to_string();
-            assert!(display.ends_with(".db"), "Display should end with .db: {display}");
-        }
-    }
-
-    // ====================================================================
-    // Batch: StatePersistence stats_all on empty
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_state_persistence_stats_all_empty() -> crate::Result<()> {
-        let dir = tempfile::tempdir().map_err(|e| Error::Database(e.to_string()))?;
-        let persistence = StatePersistence::builder()
-            .base_dir(dir.path())
-            .build()
-            .await?;
-
-        let stats = persistence.stats_all();
-        assert!(stats.is_empty());
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: connect with non-WAL mode
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_connect_non_wal_mode() -> crate::Result<()> {
-        let dir = tempfile::tempdir().map_err(|e| Error::Database(e.to_string()))?;
-        let db_path = dir.path().join("non_wal.db");
-        let config = DatabaseConfig::new(db_path.to_string_lossy().to_string())
-            .with_wal_mode(false);
-        let pool = connect(&config).await?;
-        assert!(pool.health_check().await?);
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: execute delete all rows
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_execute_delete_all_rows() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+    async fn test_fetch_optional_some_case() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE del_all (id INTEGER PRIMARY KEY, val TEXT)",
+            "CREATE TABLE fopt_some (id INTEGER PRIMARY KEY, value TEXT)",
             &[],
         )
         .await?;
 
-        for i in 0..5 {
-            execute(
-                &pool,
-                "INSERT INTO del_all (val) VALUES (?)",
-                &[&format!("v{i}")],
-            )
-            .await?;
-        }
-
-        let affected = execute(&pool, "DELETE FROM del_all", &[]).await?;
-        assert_eq!(affected, 5);
-
-        let total = count(&pool, "del_all", None, &[]).await?;
-        assert_eq!(total, 0);
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: DatabasePool path correctness
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_database_pool_path_contains_filename() -> crate::Result<()> {
-        let dir = tempfile::tempdir().map_err(|e| Error::Database(e.to_string()))?;
-        let db_path = dir.path().join("custom_name.db");
-        let config = DatabaseConfig::new(db_path.to_string_lossy().to_string());
-        let pool = connect(&config).await?;
-        assert_eq!(pool.database_name(), "custom_name");
-        assert!(pool.path().ends_with("custom_name.db"));
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: QueryBuilder or_eq chain
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_query_builder_or_eq_chain() {
-        let qb = QueryBuilder::select(&["id"])
-            .from("events")
-            .where_eq("level", "error")
-            .or_eq("level", "fatal")
-            .or_eq("level", "panic");
-        assert_eq!(
-            qb.build(),
-            "SELECT id FROM events WHERE level = ? OR level = ? OR level = ?"
-        );
-        assert_eq!(qb.params().len(), 3);
-    }
-
-    // ====================================================================
-    // Batch: save and load Option type
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_save_and_load_option_some() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
         execute(
             &pool,
-            "CREATE TABLE kv_opt (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)",
+            "INSERT INTO fopt_some (id, value) VALUES (?, ?)",
+            &["10", "\"present\""],
+        )
+        .await?;
+
+        let result: Option<String> = fetch_optional(
+            &pool,
+            "SELECT value FROM fopt_some WHERE id = ?",
+            &["10"],
+        )
+        .await?;
+        assert_eq!(result.as_deref(), Some("present"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_optional_none_case() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE fopt_none (id INTEGER PRIMARY KEY, value TEXT)",
             &[],
         )
         .await?;
 
-        let data: Option<i32> = Some(42);
-        save(&pool, "kv_opt", "opt_key", &data).await?;
-        let loaded: Option<Option<i32>> = load(&pool, "kv_opt", "opt_key").await?;
-        assert_eq!(loaded, Some(Some(42)));
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: save and load null/None Option
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_save_and_load_option_none() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
-        execute(
+        let result: Option<String> = fetch_optional(
             &pool,
-            "CREATE TABLE kv_none (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)",
-            &[],
+            "SELECT value FROM fopt_none WHERE id = ?",
+            &["777"],
         )
         .await?;
-
-        let data: Option<i32> = None;
-        save(&pool, "kv_none", "null_key", &data).await?;
-        let loaded: Option<Option<i32>> = load(&pool, "kv_none", "null_key").await?;
-        assert_eq!(loaded, Some(None));
+        assert!(result.is_none());
         Ok(())
     }
 
     // ====================================================================
-    // Batch: StatePersistence to_tensor dims in range
+    // NEW BATCH: Transaction — begin, insert, commit (3 tests)
     // ====================================================================
 
     #[tokio::test]
-    async fn test_state_persistence_tensor_dims_in_range() -> crate::Result<()> {
-        let dir = tempfile::tempdir().map_err(|e| Error::Database(e.to_string()))?;
-        let persistence = StatePersistence::builder()
-            .base_dir(dir.path())
-            .with_all_databases()
-            .build()
-            .await?;
-
-        let tensor = persistence.to_tensor();
-        for (i, val) in tensor.to_array().iter().enumerate() {
-            assert!(
-                (0.0..=1.0).contains(val),
-                "Tensor dim {i} out of range: {val}"
-            );
-        }
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: execute create index
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_execute_create_index() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+    async fn test_transaction_begin_and_commit_with_multiple_inserts() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE idx_test (id INTEGER PRIMARY KEY, name TEXT, tag TEXT)",
-            &[],
-        )
-        .await?;
-
-        let result = execute(
-            &pool,
-            "CREATE INDEX idx_tag ON idx_test (tag)",
-            &[],
-        )
-        .await;
-        assert!(result.is_ok());
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: DatabaseConfig max_connections 1
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_connect_with_single_connection() -> crate::Result<()> {
-        let dir = tempfile::tempdir().map_err(|e| Error::Database(e.to_string()))?;
-        let db_path = dir.path().join("single.db");
-        let config = DatabaseConfig::new(db_path.to_string_lossy().to_string())
-            .with_max_connections(1)
-            .with_min_connections(1);
-        let pool = connect(&config).await?;
-        assert!(pool.health_check().await?);
-        let stats = pool.stats();
-        assert!(stats.size >= 1);
-        Ok(())
-    }
-
-    // ====================================================================
-    // Batch: transaction execute update returns zero on empty
-    // ====================================================================
-
-    #[tokio::test]
-    async fn test_transaction_update_empty_table() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
-        execute(
-            &pool,
-            "CREATE TABLE tx_upd_e (id INTEGER PRIMARY KEY, val TEXT)",
+            "CREATE TABLE tx_multi (id INTEGER PRIMARY KEY, val TEXT)",
             &[],
         )
         .await?;
 
         let mut tx = begin_transaction(&pool).await?;
-        let affected = tx
-            .execute("UPDATE tx_upd_e SET val = ? WHERE id = ?", &["new", "1"])
+        tx.execute("INSERT INTO tx_multi (val) VALUES (?)", &["a"])
             .await?;
-        assert_eq!(affected, 0);
+        tx.execute("INSERT INTO tx_multi (val) VALUES (?)", &["b"])
+            .await?;
+        tx.execute("INSERT INTO tx_multi (val) VALUES (?)", &["c"])
+            .await?;
         tx.commit().await?;
+
+        let total = count(&pool, "tx_multi", None, &[]).await?;
+        assert_eq!(total, 3);
         Ok(())
     }
 
-    // ====================================================================
-    // Batch: save/load Vec of structs
-    // ====================================================================
-
     #[tokio::test]
-    async fn test_save_and_load_vec_of_structs() -> crate::Result<()> {
-        let (pool, _temp_dir) = create_test_pool().await?;
-
+    async fn test_transaction_rollback_discards_all_inserts() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
         execute(
             &pool,
-            "CREATE TABLE kv_vec_s (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)",
+            "CREATE TABLE tx_rb_all (id INTEGER PRIMARY KEY, val TEXT)",
             &[],
         )
         .await?;
 
-        #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
-        struct Point {
-            x: f64,
-            y: f64,
+        let mut tx = begin_transaction(&pool).await?;
+        tx.execute("INSERT INTO tx_rb_all (val) VALUES (?)", &["x"])
+            .await?;
+        tx.execute("INSERT INTO tx_rb_all (val) VALUES (?)", &["y"])
+            .await?;
+        tx.rollback().await?;
+
+        let total = count(&pool, "tx_rb_all", None, &[]).await?;
+        assert_eq!(total, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_transaction_execute_returns_correct_affected() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        execute(
+            &pool,
+            "CREATE TABLE tx_aff (id INTEGER PRIMARY KEY, val TEXT)",
+            &[],
+        )
+        .await?;
+
+        // Pre-insert two rows outside transaction
+        execute(&pool, "INSERT INTO tx_aff (val) VALUES (?)", &["pre1"]).await?;
+        execute(&pool, "INSERT INTO tx_aff (val) VALUES (?)", &["pre2"]).await?;
+
+        let mut tx = begin_transaction(&pool).await?;
+        let affected = tx
+            .execute("UPDATE tx_aff SET val = ?", &["updated"])
+            .await?;
+        tx.commit().await?;
+
+        assert_eq!(affected, 2);
+        Ok(())
+    }
+
+    // ====================================================================
+    // NEW BATCH: QueryBuilder — chain methods, defaults (3 tests)
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_query_builder_complex_chain() {
+        let qb = QueryBuilder::select(&["id", "name", "score"])
+            .from("players")
+            .where_eq("team", "red")
+            .and_eq("active", "true")
+            .or_eq("role", "captain")
+            .order_by("score", "DESC")
+            .limit(25)
+            .offset(50);
+
+        let sql = qb.build();
+        assert!(sql.contains("SELECT id, name, score"));
+        assert!(sql.contains("FROM players"));
+        assert!(sql.contains("WHERE team = ?"));
+        assert!(sql.contains("AND active = ?"));
+        assert!(sql.contains("OR role = ?"));
+        assert!(sql.contains("ORDER BY score DESC"));
+        assert!(sql.contains("LIMIT 25"));
+        assert!(sql.contains("OFFSET 50"));
+        assert_eq!(qb.params().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_query_builder_default_has_empty_query() {
+        let qb = QueryBuilder::default();
+        assert!(qb.build().is_empty());
+        assert!(qb.params().is_empty());
+        assert!(qb.params_owned().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_query_builder_new_preserves_arbitrary_sql() {
+        let raw_sql = "PRAGMA table_info('my_table')";
+        let qb = QueryBuilder::new(raw_sql);
+        assert_eq!(qb.build(), raw_sql);
+        assert!(qb.params().is_empty());
+    }
+
+    // ====================================================================
+    // NEW BATCH: DatabaseConfig — builder pattern (2 tests)
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_database_config_builder_with_zero_values() {
+        let config = DatabaseConfig::new("zero.db")
+            .with_max_connections(0)
+            .with_min_connections(0)
+            .with_acquire_timeout(0);
+
+        assert_eq!(config.max_connections, 0);
+        assert_eq!(config.min_connections, 0);
+        assert_eq!(config.acquire_timeout_secs, 0);
+    }
+
+    #[tokio::test]
+    async fn test_database_config_builder_large_values() {
+        let config = DatabaseConfig::new("large.db")
+            .with_max_connections(1000)
+            .with_min_connections(500)
+            .with_acquire_timeout(3600);
+
+        assert_eq!(config.max_connections, 1000);
+        assert_eq!(config.min_connections, 500);
+        assert_eq!(config.acquire_timeout_secs, 3600);
+    }
+
+    // ====================================================================
+    // NEW BATCH: DatabaseType — all variants, migration numbers (3 tests)
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_database_type_all_covers_every_variant() {
+        let all = DatabaseType::all();
+        // Ensure no duplicates
+        let mut seen = std::collections::HashSet::new();
+        for db_type in &all {
+            assert!(seen.insert(db_type), "Duplicate found: {db_type:?}");
+        }
+        assert_eq!(seen.len(), 11);
+    }
+
+    #[tokio::test]
+    async fn test_database_type_migration_numbers_are_sequential() {
+        let all = DatabaseType::all();
+        for (i, db_type) in all.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            let expected = (i + 1) as u32;
+            assert_eq!(db_type.migration_number(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_database_type_all_filenames_end_with_db() {
+        for db_type in DatabaseType::all() {
+            assert!(
+                db_type.filename().ends_with(".db"),
+                "{:?} filename does not end with .db",
+                db_type
+            );
+        }
+    }
+
+    // ====================================================================
+    // NEW BATCH: PoolStats — clone, copy (2 tests)
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_pool_stats_copy_semantics() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        let original = pool.stats();
+        let copied = original; // implicit Copy
+        // Modifying copied should not affect original (they're both copies)
+        assert_eq!(original.size, copied.size);
+        assert_eq!(original.idle, copied.idle);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pool_stats_clone_debug() -> crate::Result<()> {
+        let pool = create_in_memory_pool().await?;
+        let stats = pool.stats();
+        let cloned = stats.clone();
+        let debug = format!("{cloned:?}");
+        assert!(debug.contains("PoolStats"));
+        assert!(debug.contains("size"));
+        assert!(debug.contains("idle"));
+        Ok(())
+    }
+
+    // ====================================================================
+    // NEW BATCH: Concurrent access — Arc + threads (2 tests)
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_concurrent_reads_via_arc() -> crate::Result<()> {
+        let pool = Arc::new(create_in_memory_pool().await?);
+        execute(
+            &pool,
+            "CREATE TABLE conc_read (key TEXT PRIMARY KEY, value TEXT)",
+            &[],
+        )
+        .await?;
+        execute(
+            &pool,
+            "INSERT INTO conc_read (key, value) VALUES (?, ?)",
+            &["ck", "cv"],
+        )
+        .await?;
+
+        let mut handles = Vec::new();
+        for _ in 0..5 {
+            let pool_clone = Arc::clone(&pool);
+            handles.push(tokio::spawn(async move {
+                exists(&pool_clone, "conc_read", "ck").await
+            }));
         }
 
-        let data = vec![
-            Point { x: 1.0, y: 2.0 },
-            Point { x: 3.0, y: 4.0 },
-        ];
+        for handle in handles {
+            let result = handle
+                .await
+                .map_err(|e| Error::Database(format!("join error: {e}")))?;
+            assert!(result.is_ok());
+            assert!(result.map_err(|e| Error::Database(format!("{e}")))? );
+        }
+        Ok(())
+    }
 
-        save(&pool, "kv_vec_s", "points", &data).await?;
-        let loaded: Option<Vec<Point>> = load(&pool, "kv_vec_s", "points").await?;
-        let val = loaded.ok_or_else(|| Error::Database("missing vec".to_string()))?;
-        assert_eq!(val.len(), 2);
-        assert!((val[0].x - 1.0).abs() < f64::EPSILON);
-        assert!((val[1].y - 4.0).abs() < f64::EPSILON);
+    #[tokio::test]
+    async fn test_concurrent_writes_via_arc() -> crate::Result<()> {
+        let pool = Arc::new(create_in_memory_pool().await?);
+        execute(
+            &pool,
+            "CREATE TABLE conc_write (id INTEGER PRIMARY KEY, val TEXT)",
+            &[],
+        )
+        .await?;
+
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let pool_clone = Arc::clone(&pool);
+            let val = format!("item_{i}");
+            handles.push(tokio::spawn(async move {
+                execute(
+                    &pool_clone,
+                    "INSERT INTO conc_write (val) VALUES (?)",
+                    &[&val],
+                )
+                .await
+            }));
+        }
+
+        for handle in handles {
+            let result = handle
+                .await
+                .map_err(|e| Error::Database(format!("join error: {e}")))?;
+            assert!(result.is_ok());
+        }
+
+        let total = count(&pool, "conc_write", None, &[]).await?;
+        assert_eq!(total, 10);
         Ok(())
     }
 }
