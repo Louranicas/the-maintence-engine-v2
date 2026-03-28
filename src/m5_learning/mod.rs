@@ -30,6 +30,7 @@ pub mod decay_scheduler;
 pub mod hebbian;
 pub mod pattern;
 pub mod pruner;
+pub mod sequence;
 pub mod stdp;
 
 use crate::StdpConfig;

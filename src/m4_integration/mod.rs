@@ -44,6 +44,7 @@ pub mod cascade_bridge;
 pub mod peer_bridge;
 pub mod tool_registrar;
 pub mod auth;
+pub mod rate_limiter;
 
 // Re-export key types for convenient access
 pub use rest::{RestClient, RestResponse, HttpMethod, RequestRecord};
@@ -55,6 +56,7 @@ pub use bridge::{BridgeManager, ServiceBridge, BridgeStatus};
 pub use peer_bridge::{PeerBridgeManager, PeerHealthState, PeerConfig, MeshHealthSummary};
 pub use tool_registrar::{ToolRegistrar, RegistrationReport, ToolRegistrationStatus};
 pub use auth::{AuthManager, Authenticator, TokenType, TokenIdentity, IssuedToken, VerifiedClaims, SecurityEvent, SecurityEventType, AuthAuditSummary, AuthConfig};
+pub use rate_limiter::{RateLimiter, RateLimiting, RateDecision, BucketState, TierRateConfig, RateLimiterConfig, RateLimiterStats};
 
 /// Wire protocol types
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
