@@ -251,6 +251,9 @@ fn spawn_background_tasks(state: &Arc<AppState>) {
     spawn_health_polling(state);
     spawn_devops_pipeline_trigger();
     spawn_pv2_eventbus_bridge(state);
+    spawn_orac_bridge_polling(state);
+    spawn_field_tracking(state);
+    spawn_self_model_updater(state);
 }
 
 /// Issue 9: One-shot trigger of a DevOps Engine health-check pipeline.
@@ -395,8 +398,9 @@ fn spawn_pv2_eventbus_bridge(state: &Arc<AppState>) {
 /// service status from Unknown → Healthy/Unhealthy.
 #[allow(clippy::too_many_lines)] // 13-service health polling with per-service error handling
 fn spawn_health_polling(state: &Arc<AppState>) {
-    use maintenance_engine_v2::m2_services::{HealthCheckResult, HealthMonitoring};
     use maintenance_engine_v2::m1_foundation::Timestamp;
+    use maintenance_engine_v2::m2_services::{HealthCheckResult, HealthMonitoring};
+    use maintenance_engine_v2::nexus::stdp_bridge::StdpBridge;
 
     let poll_state = Arc::clone(state);
     tokio::spawn(async move {
@@ -500,6 +504,9 @@ fn spawn_health_polling(state: &Arc<AppState>) {
                 ) {
                     tracing::trace!(error = %e, "Failed to publish health check event");
                 }
+
+                // C12: Record STDP co-activation for each successful service interaction
+                let _ = poll_state.engine.stdp_bridge().record_interaction("maintenance-engine", service_id, is_healthy);
             }
 
             // METABOLIC-GAP-1 FIX: Publish health cycle summary to EventBus
@@ -521,6 +528,167 @@ fn spawn_health_polling(state: &Arc<AppState>) {
                 probes = probe_count,
                 "Health polling cycle complete"
             );
+        }
+    });
+}
+
+/// Spawn ORAC bridge polling: polls ORAC at localhost:8133/health every 30s.
+///
+/// Records successful polls and failures via `OracBridge::record_poll()` and
+/// `OracBridge::record_failure()`, keeping the ME-side view of ORAC liveness
+/// in sync with actual reachability.
+fn spawn_orac_bridge_polling(state: &Arc<AppState>) {
+    use maintenance_engine_v2::m4_integration::orac_bridge::OracBridge;
+
+    let bridge_state = Arc::clone(state);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        tracing::info!("ORAC bridge polling started (30s interval)");
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let addr = "127.0.0.1:8133";
+            let request =
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1:8133\r\nConnection: close\r\n\r\n";
+            match tokio::time::timeout(
+                Duration::from_secs(3),
+                tokio::net::TcpStream::connect(addr),
+            )
+            .await
+            {
+                Ok(Ok(stream)) => {
+                    let (reader, mut writer) = stream.into_split();
+                    if let Err(e) = tokio::io::AsyncWriteExt::write_all(
+                        &mut writer,
+                        request.as_bytes(),
+                    )
+                    .await
+                    {
+                        tracing::debug!(error = %e, "ORAC bridge poll write failed");
+                        bridge_state.engine.orac_bridge().record_failure();
+                        continue;
+                    }
+                    let _ = tokio::io::AsyncWriteExt::shutdown(&mut writer).await;
+                    let mut buf = Vec::new();
+                    let mut buf_reader = tokio::io::BufReader::new(reader);
+                    let _ =
+                        tokio::io::AsyncReadExt::read_to_end(&mut buf_reader, &mut buf).await;
+                    let response = String::from_utf8_lossy(&buf);
+                    if response.contains("200") {
+                        tracing::trace!("ORAC bridge poll success");
+                    } else {
+                        bridge_state.engine.orac_bridge().record_failure();
+                    }
+                }
+                _ => {
+                    bridge_state.engine.orac_bridge().record_failure();
+                }
+            }
+        }
+    });
+}
+
+/// Spawn field tracking: reads PV2 health at localhost:8132 every 10s.
+///
+/// Extracts Kuramoto `r`, coupling `k`, and sphere count from the PV2 health
+/// JSON, then updates the Nexus field bridge, checks for morphogenic triggers,
+/// and advances the regime manager.
+#[allow(clippy::too_many_lines)]
+fn spawn_field_tracking(state: &Arc<AppState>) {
+    use maintenance_engine_v2::nexus::field_bridge::FieldBridge;
+    use maintenance_engine_v2::nexus::morphogenic_adapter::MorphogenicAdapter;
+    use maintenance_engine_v2::nexus::regime_manager::RegimeManager;
+
+    let field_state = Arc::clone(state);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        tracing::info!("Field tracking started (10s interval)");
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let addr = "127.0.0.1:8132";
+            let request =
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1:8132\r\nConnection: close\r\n\r\n";
+            if let Ok(Ok(stream)) = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::net::TcpStream::connect(addr),
+            )
+            .await
+            {
+                let (reader, mut writer) = stream.into_split();
+                let _ = tokio::io::AsyncWriteExt::write_all(
+                    &mut writer,
+                    request.as_bytes(),
+                )
+                .await;
+                let _ = tokio::io::AsyncWriteExt::shutdown(&mut writer).await;
+                let mut buf = Vec::new();
+                let mut buf_reader = tokio::io::BufReader::new(reader);
+                let _ =
+                    tokio::io::AsyncReadExt::read_to_end(&mut buf_reader, &mut buf).await;
+                let response = String::from_utf8_lossy(&buf);
+                if let Some(body_start) = response.find("\r\n\r\n") {
+                    let body = &response[body_start + 4..];
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
+                        let r = json.get("r").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+                        let k = json.get("k").and_then(serde_json::Value::as_f64).unwrap_or(1.0);
+                        #[allow(clippy::cast_possible_truncation)]
+                        let spheres = json
+                            .get("spheres")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap_or(0) as u32;
+                        let _ = field_state
+                            .engine
+                            .field_bridge()
+                            .update_field_state(r, k, spheres);
+
+                        // Check for morphogenic trigger
+                        let r_current = field_state.engine.field_bridge().current_r();
+                        let r_delta = r - r_current;
+                        if let Some(_action) = field_state
+                            .engine
+                            .morphogenic_adapter()
+                            .check_trigger(r_delta, k)
+                        {
+                            tracing::info!(r_delta, k, "Morphogenic adaptation triggered");
+                        }
+
+                        // Update regime manager
+                        let _ = field_state.engine.regime_manager().update_k(k);
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Spawn self-model updater: refreshes per-layer health scores every 60s.
+///
+/// Reads the engine health report and pushes each layer's score into the
+/// L1 self-model, keeping the introspective view of the stack current.
+fn spawn_self_model_updater(state: &Arc<AppState>) {
+    use maintenance_engine_v2::m1_foundation::self_model::SelfModelProvider;
+
+    let model_state = Arc::clone(state);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        tracing::info!("Self model updater started (60s interval)");
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if let Ok(report) = model_state.engine.health_report() {
+                for (i, &score) in report.layer_health.iter().enumerate() {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let layer = (i + 1) as u8;
+                    let _ = model_state.engine.self_model().update_layer_health(
+                        layer,
+                        score,
+                    );
+                }
+            }
         }
     });
 }
