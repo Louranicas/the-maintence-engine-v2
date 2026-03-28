@@ -23,6 +23,7 @@
 //! - [Layer Specification](../../ai_docs/layers/L06_CONSENSUS.md)
 //! - [PBFT Consensus](../../nam/PBFT_CONSENSUS.md)
 
+pub mod active_dissent;
 pub mod agent;
 pub mod pbft;
 pub mod voting;
