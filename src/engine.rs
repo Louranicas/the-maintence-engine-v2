@@ -56,6 +56,24 @@ use crate::m7_observer::thermal_monitor::ThermalMonitor;
 use crate::m7_observer::{ObserverConfig, ObserverLayer};
 use crate::{Error, Result, Tensor12D};
 
+// -- V2: New module imports (M48-M57 + L8 Nexus) --
+use crate::m1_foundation::self_model::{SelfModel, SelfModelConfig};
+use crate::m2_services::traffic::TrafficManager;
+use crate::m3_core_logic::approval::ApprovalManager;
+use crate::m4_integration::auth::{AuthConfig, AuthManager};
+use crate::m4_integration::orac_bridge::OracBridgeManager;
+use crate::m4_integration::rate_limiter::{RateLimiter, RateLimiterConfig};
+use crate::m5_learning::prediction::{PredictionEngineCore, PredictionConfig};
+use crate::m5_learning::sequence::{SequenceDetectorCore, SequenceDetectorConfig};
+use crate::m6_consensus::active_dissent::ActiveDissentGenerator;
+use crate::m6_consensus::checkpoint::{CheckpointConfig, InMemoryCheckpointManager};
+use crate::nexus::evolution_gate::{EvolutionGateConfig, EvolutionGateCore};
+use crate::nexus::field_bridge::FieldBridgeCore;
+use crate::nexus::intent_router::IntentRouterCore;
+use crate::nexus::morphogenic_adapter::{MorphogenicAdapterCore, MorphogenicConfig};
+use crate::nexus::regime_manager::RegimeManagerCore;
+use crate::nexus::stdp_bridge::StdpBridgeCore;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -222,6 +240,26 @@ pub struct Engine {
     thermal_monitor: Option<ThermalMonitor>,
     decay_scheduler: Option<DecayScheduler>,
     cascade_bridge: Option<CascadeBridge>,
+
+    // -- V2: New Modules (M48-M57) --
+    self_model: SelfModel,
+    traffic_manager: TrafficManager,
+    approval_manager: ApprovalManager,
+    auth_manager: AuthManager,
+    rate_limiter: RateLimiter,
+    orac_bridge: OracBridgeManager,
+    prediction_core: PredictionEngineCore,
+    sequence_detector: SequenceDetectorCore,
+    checkpoint_manager: Option<InMemoryCheckpointManager>,
+    dissent_generator: ActiveDissentGenerator,
+
+    // -- V2: L8 Nexus --
+    field_bridge: FieldBridgeCore,
+    intent_router: IntentRouterCore,
+    regime_manager: RegimeManagerCore,
+    stdp_bridge: StdpBridgeCore,
+    evolution_gate: EvolutionGateCore,
+    morphogenic_adapter: MorphogenicAdapterCore,
 }
 
 impl Default for Engine {
@@ -291,6 +329,27 @@ impl Engine {
             thermal_monitor: Some(ThermalMonitor::new()),
             decay_scheduler: Some(DecayScheduler::new()),
             cascade_bridge: Some(CascadeBridge::new()),
+
+            // V2: New Modules
+            self_model: SelfModel::new(SelfModelConfig::default()),
+            traffic_manager: TrafficManager::new(),
+            approval_manager: ApprovalManager::new(),
+            auth_manager: AuthManager::new(AuthConfig::default()),
+            rate_limiter: RateLimiter::new(RateLimiterConfig::default()),
+            orac_bridge: OracBridgeManager::new(),
+            prediction_core: PredictionEngineCore::new(PredictionConfig::default()),
+            sequence_detector: SequenceDetectorCore::new(SequenceDetectorConfig::default()),
+            // InMemoryCheckpointManager::new returns Result -- fail-silent
+            checkpoint_manager: InMemoryCheckpointManager::new(CheckpointConfig::default()).ok(),
+            dissent_generator: ActiveDissentGenerator::default(),
+
+            // V2: L8 Nexus
+            field_bridge: FieldBridgeCore::new(),
+            intent_router: IntentRouterCore::default(),
+            regime_manager: RegimeManagerCore::new(),
+            stdp_bridge: StdpBridgeCore::default(),
+            evolution_gate: EvolutionGateCore::new(EvolutionGateConfig::default()),
+            morphogenic_adapter: MorphogenicAdapterCore::new(MorphogenicConfig::default()),
         }
     }
 
@@ -679,6 +738,106 @@ impl Engine {
     #[must_use]
     pub const fn cascade_bridge(&self) -> Option<&CascadeBridge> {
         self.cascade_bridge.as_ref()
+    }
+
+    // ==================================================================
+    // V2 Accessors
+    // ==================================================================
+
+    /// Access the L1 self-model.
+    #[must_use]
+    pub const fn self_model(&self) -> &SelfModel {
+        &self.self_model
+    }
+
+    /// Access the L2 traffic manager.
+    #[must_use]
+    pub const fn traffic_manager(&self) -> &TrafficManager {
+        &self.traffic_manager
+    }
+
+    /// Access the L3 approval manager.
+    #[must_use]
+    pub const fn approval_manager(&self) -> &ApprovalManager {
+        &self.approval_manager
+    }
+
+    /// Access the L4 auth manager.
+    #[must_use]
+    pub const fn auth_manager(&self) -> &AuthManager {
+        &self.auth_manager
+    }
+
+    /// Access the L4 rate limiter.
+    #[must_use]
+    pub const fn rate_limiter(&self) -> &RateLimiter {
+        &self.rate_limiter
+    }
+
+    /// Access the L4 ORAC bridge manager.
+    #[must_use]
+    pub const fn orac_bridge(&self) -> &OracBridgeManager {
+        &self.orac_bridge
+    }
+
+    /// Access the L5 prediction engine.
+    #[must_use]
+    pub const fn prediction_core(&self) -> &PredictionEngineCore {
+        &self.prediction_core
+    }
+
+    /// Access the L5 sequence detector.
+    #[must_use]
+    pub const fn sequence_detector(&self) -> &SequenceDetectorCore {
+        &self.sequence_detector
+    }
+
+    /// Access the L6 checkpoint manager (optional, fail-silent).
+    #[must_use]
+    pub const fn checkpoint_manager(&self) -> Option<&InMemoryCheckpointManager> {
+        self.checkpoint_manager.as_ref()
+    }
+
+    /// Access the L6 active dissent generator.
+    #[must_use]
+    pub const fn dissent_generator(&self) -> &ActiveDissentGenerator {
+        &self.dissent_generator
+    }
+
+    /// Access the L8 field bridge.
+    #[must_use]
+    pub const fn field_bridge(&self) -> &FieldBridgeCore {
+        &self.field_bridge
+    }
+
+    /// Access the L8 intent router.
+    #[must_use]
+    pub const fn intent_router(&self) -> &IntentRouterCore {
+        &self.intent_router
+    }
+
+    /// Access the L8 regime manager.
+    #[must_use]
+    pub const fn regime_manager(&self) -> &RegimeManagerCore {
+        &self.regime_manager
+    }
+
+    /// Access the L8 STDP bridge.
+    #[must_use]
+    pub const fn stdp_bridge(&self) -> &StdpBridgeCore {
+        &self.stdp_bridge
+    }
+
+    /// Access the L8 evolution gate.
+    #[must_use]
+    pub const fn evolution_gate(&self) -> &EvolutionGateCore {
+        &self.evolution_gate
+    }
+
+    /// Access the L8 morphogenic adapter.
+    #[must_use]
+    pub const fn morphogenic_adapter(&self) -> &MorphogenicAdapterCore {
+        &self.morphogenic_adapter
     }
 
     // ==================================================================
