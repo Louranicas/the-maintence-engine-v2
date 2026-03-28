@@ -92,14 +92,21 @@ done
 | Need | Go To |
 |------|-------|
 | Full inventory | [MASTER_INDEX.md](../MASTER_INDEX.md) |
+| README | [README.md](../README.md) |
 | Architecture blueprint | [SCAFFOLDING_MASTER_PLAN.md](../SCAFFOLDING_MASTER_PLAN.md) |
-| Module specs | [ai_docs/modules/INDEX.md](modules/INDEX.md) |
-| Layer specs | [ai_docs/layers/](layers/) |
+| Bootstrap context | [CLAUDE.md](../CLAUDE.md) |
+| Module specs | [modules/INDEX.md](modules/INDEX.md) |
+| Layer specs | [layers/](layers/) |
 | AI specs | [ai_specs/INDEX.md](../ai_specs/INDEX.md) |
 | Nexus specs | [ai_specs/nexus-specs/](../ai_specs/nexus-specs/) |
+| Habitat wiring | [HABITAT_INTEGRATION_SPEC.md](../ai_specs/HABITAT_INTEGRATION_SPEC.md) |
+| Evolution Chamber V2 | [ADVANCED_EVOLUTION_CHAMBER_V2.md](ADVANCED_EVOLUTION_CHAMBER_V2.md) |
 | Design patterns | [ai_specs/patterns/](../ai_specs/patterns/) |
 | Meta tree mind map | [META_TREE_MIND_MAP_V2.md](META_TREE_MIND_MAP_V2.md) |
-| Deployment plan | [META_TREE_MIND_MAP_M48_M57.md](META_TREE_MIND_MAP_M48_M57.md) |
+| V1 expansion plan | [META_TREE_MIND_MAP_M48_M57.md](META_TREE_MIND_MAP_M48_M57.md) |
+| Machine context | [.claude/context.json](../.claude/context.json) |
+| Patterns (P01-P22) | [.claude/patterns.json](../.claude/patterns.json) |
+| Alignment checks | [.claude/ALIGNMENT_VERIFICATION.md](../.claude/ALIGNMENT_VERIFICATION.md) |
 | V1 reference | `/home/louranicas/claude-code-workspace/the_maintenance_engine/` |
 
 ## V2 Enhancements over V1

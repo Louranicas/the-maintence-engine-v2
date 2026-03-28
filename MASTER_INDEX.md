@@ -14,14 +14,21 @@
 | Resource | Path | Description |
 |----------|------|-------------|
 | **This File** | `MASTER_INDEX.md` | Complete project inventory |
-| **Scaffolding Plan** | `SCAFFOLDING_MASTER_PLAN.md` | V2 architecture blueprint |
-| **Bootstrap Context** | `CLAUDE.md` | AI context for Claude Code sessions |
-| **Local Dev Context** | `CLAUDE.local.md` | Session state and phase tracking |
-| **Quick Start** | `ai_docs/QUICKSTART.md` | Build, run, navigate |
-| **Meta Tree Mind Map** | `ai_docs/META_TREE_MIND_MAP_V2.md` | Deployment scaffolding |
-| **AI Docs Index** | `ai_docs/INDEX.md` | Documentation hub |
-| **AI Specs Index** | `ai_specs/INDEX.md` | Specifications hub |
-| **Module Index** | `ai_docs/modules/INDEX.md` | All 48 module docs |
+| **README** | [`README.md`](README.md) | Project overview + quick start |
+| **Scaffolding Plan** | [`SCAFFOLDING_MASTER_PLAN.md`](SCAFFOLDING_MASTER_PLAN.md) | V2 architecture blueprint |
+| **Bootstrap Context** | [`CLAUDE.md`](CLAUDE.md) | AI context for Claude Code sessions |
+| **Local Dev Context** | [`CLAUDE.local.md`](CLAUDE.local.md) | Session state and phase tracking |
+| **Quick Start** | [`ai_docs/QUICKSTART.md`](ai_docs/QUICKSTART.md) | Build, run, navigate |
+| **Meta Tree Mind Map** | [`ai_docs/META_TREE_MIND_MAP_V2.md`](ai_docs/META_TREE_MIND_MAP_V2.md) | Full architecture tree + wiring |
+| **Evolution Chamber V2** | [`ai_docs/ADVANCED_EVOLUTION_CHAMBER_V2.md`](ai_docs/ADVANCED_EVOLUTION_CHAMBER_V2.md) | RALPH redesign from live data |
+| **Habitat Integration** | [`ai_specs/HABITAT_INTEGRATION_SPEC.md`](ai_specs/HABITAT_INTEGRATION_SPEC.md) | Full wiring map + schematics |
+| **AI Docs Index** | [`ai_docs/INDEX.md`](ai_docs/INDEX.md) | Documentation hub |
+| **AI Specs Index** | [`ai_specs/INDEX.md`](ai_specs/INDEX.md) | Specifications hub |
+| **Module Index** | [`ai_docs/modules/INDEX.md`](ai_docs/modules/INDEX.md) | 55 module docs (48 M + 6 N + INDEX) |
+| **Context (machine)** | [`.claude/context.json`](.claude/context.json) | Machine-readable module inventory |
+| **Status (compact)** | [`.claude/status.json`](.claude/status.json) | Ultra-compact heartbeat state |
+| **Patterns** | [`.claude/patterns.json`](.claude/patterns.json) | 22 mandatory Rust patterns (P01-P22) |
+| **Alignment Check** | [`.claude/ALIGNMENT_VERIFICATION.md`](.claude/ALIGNMENT_VERIFICATION.md) | Triple alignment verification procedures |
 
 ---
 

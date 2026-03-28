@@ -1,9 +1,9 @@
 # The Maintenance Engine V2 - Bootstrap Context
 
-[Back to README](README.md) | [**MASTER_PLAN**](SCAFFOLDING_MASTER_PLAN.md) | [AI Specs](ai_specs/INDEX.md) | [AI Docs](ai_docs/INDEX.md)
+[README](README.md) | [**MASTER_INDEX**](MASTER_INDEX.md) | [**MASTER_PLAN**](SCAFFOLDING_MASTER_PLAN.md) | [Quick Start](ai_docs/QUICKSTART.md) | [AI Docs](ai_docs/INDEX.md) | [AI Specs](ai_specs/INDEX.md) | [Mind Map](ai_docs/META_TREE_MIND_MAP_V2.md) | [Habitat Wiring](ai_specs/HABITAT_INTEGRATION_SPEC.md) | [Evolution V2](ai_docs/ADVANCED_EVOLUTION_CHAMBER_V2.md) | [Modules](ai_docs/modules/INDEX.md) | [.claude/](.claude/context.json)
 
 ```json
-{"v":"2.0.0","status":"SCAFFOLDED","modules_target":48,"layers":8,"cloned_loc":23907,"tests_target":2400,"clippy":0,"databases":12,"pipelines":8,"services":13,"hooks":14,"tensor_dims":12,"port":8080,"nam_target":0.95,"pbft":{"n":40,"f":13,"q":27},"nexus":true,"ovm":true,"k_regime":"adaptive"}
+{"v":"2.0.0","status":"COMPILED","modules":48,"layers":8,"loc":62522,"tests":2288,"clippy":0,"databases":12,"pipelines":8,"services":13,"hooks":14,"tensor_dims":12,"port":8080,"nam_target":0.95,"pbft":{"n":40,"f":13,"q":27},"nexus":true,"ovm":true,"k_regime":"adaptive","source_files":73}
 ```
 
 **Current State:** SCAFFOLDED — M1 Foundation (16,711 LOC) + M2 Services (7,196 LOC) cloned as gold standard. 12 databases cloned (5.9MB). 155+ supporting assets. L3-L8 await implementation.
