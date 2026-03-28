@@ -951,15 +951,19 @@ impl Engine {
     /// Pre-populate the L2 service registry with the 12 ULTRAPLATE services
     /// and their dependency edges. Called once during [`Engine::new`].
     fn populate_ultraplate_services(registry: &ServiceRegistry) {
-        let services: [(&str, &str, &str, ServiceTier, u16, &str); 12] = [
+        let services: [(&str, &str, &str, ServiceTier, u16, &str); 16] = [
             ("synthex", "SYNTHEX", "1.0.0", ServiceTier::Tier1, 8090, "/api/health"),
             ("san-k7", "SAN-K7 Orchestrator", "1.55.0", ServiceTier::Tier1, 8100, "/health"),
             ("nais", "NAIS", "1.0.0", ServiceTier::Tier2, 8101, "/health"),
             ("codesynthor-v7", "CodeSynthor V7", "7.3.0", ServiceTier::Tier2, 8110, "/health"),
             ("devops-engine", "DevOps Engine", "2.0.0", ServiceTier::Tier2, 8081, "/health"),
             ("tool-library", "Tool Library", "1.0.0", ServiceTier::Tier3, 8105, "/health"),
-            ("library-agent", "Library Agent", "1.0.0", ServiceTier::Tier3, 8083, "/health"),
             ("ccm", "Claude Context Manager", "1.0.0", ServiceTier::Tier3, 8104, "/health"),
+            ("vortex-memory", "Vortex Memory System", "1.0.0", ServiceTier::Tier3, 8120, "/health"),
+            ("povm-engine", "POVM Engine", "1.0.0", ServiceTier::Tier4, 8125, "/health"),
+            ("reasoning-memory", "Reasoning Memory", "1.0.0", ServiceTier::Tier4, 8130, "/health"),
+            ("pane-vortex", "Pane-Vortex V2", "1.0.0", ServiceTier::Tier4, 8132, "/health"),
+            ("orac-sidecar", "ORAC Sidecar", "1.0.0", ServiceTier::Tier4, 8133, "/health"),
             ("prometheus-swarm", "Prometheus Swarm", "1.0.0", ServiceTier::Tier4, 10001, "/health"),
             ("architect-agent", "Architect Agent", "1.0.0", ServiceTier::Tier4, 9001, "/health"),
             ("bash-engine", "Bash Engine", "1.0.0", ServiceTier::Tier5, 8102, "/health"),
@@ -1030,15 +1034,19 @@ impl Engine {
     /// Registers each service, then transitions through Starting to Running
     /// so that D7 (uptime proxy) starts at 1.0 with zero restarts.
     fn populate_lifecycle_services(manager: &LifecycleManager) {
-        let services: [(&str, &str, ServiceTier); 12] = [
+        let services: [(&str, &str, ServiceTier); 16] = [
             ("synthex", "SYNTHEX", ServiceTier::Tier1),
             ("san-k7", "SAN-K7 Orchestrator", ServiceTier::Tier1),
             ("nais", "NAIS", ServiceTier::Tier2),
             ("codesynthor-v7", "CodeSynthor V7", ServiceTier::Tier2),
             ("devops-engine", "DevOps Engine", ServiceTier::Tier2),
             ("tool-library", "Tool Library", ServiceTier::Tier3),
-            ("library-agent", "Library Agent", ServiceTier::Tier3),
             ("ccm", "Claude Context Manager", ServiceTier::Tier3),
+            ("vortex-memory", "Vortex Memory System", ServiceTier::Tier3),
+            ("povm-engine", "POVM Engine", ServiceTier::Tier4),
+            ("reasoning-memory", "Reasoning Memory", ServiceTier::Tier4),
+            ("pane-vortex", "Pane-Vortex V2", ServiceTier::Tier4),
+            ("orac-sidecar", "ORAC Sidecar", ServiceTier::Tier4),
             ("prometheus-swarm", "Prometheus Swarm", ServiceTier::Tier4),
             ("architect-agent", "Architect Agent", ServiceTier::Tier4),
             ("bash-engine", "Bash Engine", ServiceTier::Tier5),

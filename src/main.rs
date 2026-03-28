@@ -422,8 +422,8 @@ fn spawn_health_polling(state: &Arc<AppState>) {
             let mut healthy = 0_u32;
             let mut total_checked = 0_u32;
 
-            // Get all probe endpoints by trying each known service
-            let services: [(&str, &str); 12] = [
+            // Get all probe endpoints — V2: includes memory/coordination/ORAC tier
+            let services: [(&str, &str); 16] = [
                 ("devops-engine",    "http://localhost:8081/health"),
                 ("synthex",          "http://localhost:8090/api/health"),
                 ("san-k7",           "http://localhost:8100/health"),
@@ -433,9 +433,13 @@ fn spawn_health_polling(state: &Arc<AppState>) {
                 ("ccm",              "http://localhost:8104/health"),
                 ("tool-library",     "http://localhost:8105/health"),
                 ("codesynthor-v7",   "http://localhost:8110/health"),
+                ("vortex-memory",    "http://localhost:8120/health"),
                 ("povm-engine",      "http://localhost:8125/health"),
-                ("pane-vortex",      "http://localhost:8132/health"),
                 ("reasoning-memory", "http://localhost:8130/health"),
+                ("pane-vortex",      "http://localhost:8132/health"),
+                ("orac-sidecar",     "http://localhost:8133/health"),
+                ("architect-agent",  "http://localhost:9001/health"),
+                ("prometheus-swarm", "http://localhost:10001/health"),
             ];
 
             for &(service_id, url) in &services {
