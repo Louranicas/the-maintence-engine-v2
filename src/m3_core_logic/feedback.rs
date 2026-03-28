@@ -947,4 +947,601 @@ mod tests {
         let result = feedback.record_calibration("test", -0.1, true);
         assert!(result.is_err());
     }
+
+    // -----------------------------------------------------------------------
+    // 18. test_signal_has_uuid_id
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_signal_has_uuid_id() {
+        let feedback = FeedbackLoop::new();
+        let result = feedback.generate_signal("svc", "o1", true, 0.9, 0.8, "a->b");
+        assert!(result.is_ok());
+        if let Ok(s) = result {
+            assert!(!s.id.is_empty());
+            assert_eq!(s.id.len(), 36);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 19. test_signal_timestamp
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_signal_timestamp() {
+        let feedback = FeedbackLoop::new();
+        let before = Utc::now();
+        let result = feedback.generate_signal("svc", "o1", true, 0.9, 0.8, "a->b");
+        let after = Utc::now();
+        assert!(result.is_ok());
+        if let Ok(s) = result {
+            assert!(s.timestamp >= before);
+            assert!(s.timestamp <= after);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 20. test_reinforcement_signal_threshold
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_reinforcement_signal_threshold() {
+        let feedback = FeedbackLoop::new();
+        // Exactly at threshold
+        let result = feedback.generate_signal("svc", "o1", true, 0.7, 0.8, "a->b");
+        assert!(result.is_ok());
+        if let Ok(s) = result {
+            assert_eq!(s.signal_type, SignalType::Reinforcement);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 21. test_exploration_signal_below_threshold
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_exploration_signal_below_threshold() {
+        let feedback = FeedbackLoop::new();
+        // Just below threshold
+        let result = feedback.generate_signal("svc", "o1", true, 0.69, 0.8, "a->b");
+        assert!(result.is_ok());
+        if let Ok(s) = result {
+            assert_eq!(s.signal_type, SignalType::Exploration);
+            // strength = 0.69 * 0.5 = 0.345
+            assert!((s.strength - 0.69 * 0.5).abs() < f64::EPSILON);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 22. test_correction_with_nonzero_effectiveness
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_correction_with_nonzero_effectiveness() {
+        let feedback = FeedbackLoop::new();
+        let result = feedback.generate_signal("svc", "o1", false, 0.5, 0.8, "a->b");
+        assert!(result.is_ok());
+        if let Ok(s) = result {
+            assert_eq!(s.signal_type, SignalType::Correction);
+            assert!((s.strength - (-0.5)).abs() < f64::EPSILON);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 23. test_calibration_offset_no_data
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_calibration_offset_no_data() {
+        let feedback = FeedbackLoop::new();
+        let offset = feedback.get_calibration_offset("nonexistent");
+        assert!((offset - 0.0).abs() < f64::EPSILON);
+    }
+
+    // -----------------------------------------------------------------------
+    // 24. test_calibration_insufficient_samples
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_calibration_insufficient_samples() {
+        let feedback = FeedbackLoop::new();
+        let _ = feedback.record_calibration("svc", 0.8, true);
+        let offset = feedback.record_calibration("svc", 0.7, true);
+        assert!(offset.is_ok());
+        // Only 2 samples < MIN_CALIBRATION_SAMPLES(3), offset should be 0.0
+        if let Ok(off) = offset {
+            assert!((off - 0.0).abs() < f64::EPSILON);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 25. test_calibration_boundary_zero
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_calibration_boundary_zero() {
+        let feedback = FeedbackLoop::new();
+        let result = feedback.record_calibration("svc", 0.0, false);
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // 26. test_calibration_boundary_one
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_calibration_boundary_one() {
+        let feedback = FeedbackLoop::new();
+        let result = feedback.record_calibration("svc", 1.0, true);
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // 27. test_generate_signal_validation_effectiveness
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_generate_signal_validation_effectiveness() {
+        let feedback = FeedbackLoop::new();
+        // Negative effectiveness
+        let result = feedback.generate_signal("svc", "o1", true, -0.5, 0.8, "a->b");
+        assert!(result.is_err());
+
+        // Over 1.0 effectiveness
+        let result = feedback.generate_signal("svc", "o2", true, 2.0, 0.8, "a->b");
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 28. test_generate_signal_validation_confidence
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_generate_signal_validation_confidence() {
+        let feedback = FeedbackLoop::new();
+        // Negative confidence
+        let result = feedback.generate_signal("svc", "o1", true, 0.5, -0.1, "a->b");
+        assert!(result.is_err());
+
+        // Over 1.0 confidence
+        let result = feedback.generate_signal("svc", "o2", true, 0.5, 1.5, "a->b");
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 29. test_recent_signals_zero_count
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_recent_signals_zero_count() {
+        let feedback = FeedbackLoop::new();
+        let _ = feedback.generate_signal("svc", "o1", true, 0.9, 0.8, "a->b");
+        let recent = feedback.get_recent_signals(0);
+        assert!(recent.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // 30. test_clear_old_signals_preserves_recent
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_clear_old_signals_preserves_recent() {
+        let feedback = FeedbackLoop::new();
+        for i in 0..5 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("o{i}"), true, 0.8, 0.7, "a->b",
+            );
+        }
+
+        // Clear signals older than a past timestamp (should clear nothing)
+        let past = Utc::now() - chrono::Duration::hours(1);
+        let removed = feedback.clear_old_signals(past);
+        assert_eq!(removed, 0);
+        assert_eq!(feedback.signal_count(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // 31. test_recommendation_empty_service_error
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_recommendation_empty_service_error() {
+        let feedback = FeedbackLoop::new();
+        let result = feedback.generate_recommendations("");
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 32. test_recommendation_no_signals_empty
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_recommendation_no_signals_empty() {
+        let feedback = FeedbackLoop::new();
+        let result = feedback.generate_recommendations("no-data");
+        assert!(result.is_ok());
+        if let Ok(recs) = result {
+            assert!(recs.is_empty());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 33. test_recommendation_strengthen_pathway
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_recommendation_strengthen_pathway() {
+        let feedback = FeedbackLoop::new();
+        // 10 high-effectiveness successes -> should recommend StrengthenPathway
+        for i in 0..10 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("o{i}"), true, 0.95, 0.8, "p->q",
+            );
+        }
+        let recs = feedback.generate_recommendations("svc");
+        assert!(recs.is_ok());
+        if let Ok(r) = recs {
+            let has_strengthen = r
+                .iter()
+                .any(|rec| rec.recommendation_type == RecommendationType::StrengthenPathway);
+            assert!(has_strengthen);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 34. test_recommendation_weaken_pathway
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_recommendation_weaken_pathway() {
+        let feedback = FeedbackLoop::new();
+        // Moderate negative signals -> should recommend WeakenPathway
+        for i in 0..5 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("o{i}"), false, 0.5, 0.6, "weak->path",
+            );
+        }
+        let recs = feedback.generate_recommendations("svc");
+        assert!(recs.is_ok());
+        if let Ok(r) = recs {
+            let has_weaken = r
+                .iter()
+                .any(|rec| rec.recommendation_type == RecommendationType::WeakenPathway
+                    || rec.recommendation_type == RecommendationType::PrunePathway);
+            assert!(has_weaken);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 35. test_recommendation_adjust_threshold
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_recommendation_adjust_threshold() {
+        let feedback = FeedbackLoop::new();
+        // Create large calibration offset
+        for _ in 0..5 {
+            let _ = feedback.record_calibration("svc-thresh", 0.9, false);
+        }
+
+        // Need a signal for the service to trigger recommendation generation
+        let _ = feedback.generate_signal(
+            "svc-thresh", "o1", true, 0.9, 0.8, "x->y",
+        );
+
+        let recs = feedback.generate_recommendations("svc-thresh");
+        assert!(recs.is_ok());
+        if let Ok(r) = recs {
+            let has_threshold = r
+                .iter()
+                .any(|rec| rec.recommendation_type == RecommendationType::AdjustThreshold);
+            assert!(has_threshold);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 36. test_recommendation_has_reason
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_recommendation_has_reason() {
+        let feedback = FeedbackLoop::new();
+        for i in 0..5 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("o{i}"), true, 0.95, 0.8, "a->b",
+            );
+        }
+        let recs = feedback.generate_recommendations("svc");
+        assert!(recs.is_ok());
+        if let Ok(r) = recs {
+            for rec in &r {
+                assert!(!rec.reason.is_empty());
+                assert!(!rec.pathway_key.is_empty());
+                assert!(!rec.id.is_empty());
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 37. test_signals_for_multiple_services
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_signals_for_multiple_services() {
+        let feedback = FeedbackLoop::new();
+        for i in 0..3 {
+            let _ = feedback.generate_signal(
+                "svc-a", &format!("oa{i}"), true, 0.9, 0.8, "a->b",
+            );
+        }
+        for i in 0..2 {
+            let _ = feedback.generate_signal(
+                "svc-b", &format!("ob{i}"), false, 0.3, 0.5, "c->d",
+            );
+        }
+
+        assert_eq!(feedback.get_signals_for_service("svc-a").len(), 3);
+        assert_eq!(feedback.get_signals_for_service("svc-b").len(), 2);
+        assert_eq!(feedback.signal_count(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // 38. test_calibration_signal_type_override
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_calibration_signal_type_override() {
+        let feedback = FeedbackLoop::new();
+        // Create large calibration offset (> 0.2)
+        for _ in 0..5 {
+            let _ = feedback.record_calibration("svc-cal", 0.9, false);
+        }
+
+        // Now generate a success signal - should be overridden to Calibration
+        let result = feedback.generate_signal(
+            "svc-cal", "o1", true, 0.95, 0.8, "a->b",
+        );
+        assert!(result.is_ok());
+        if let Ok(s) = result {
+            assert_eq!(s.signal_type, SignalType::Calibration);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 39. test_get_recommendations_accumulates
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_get_recommendations_accumulates() {
+        let feedback = FeedbackLoop::new();
+
+        // First batch
+        for i in 0..5 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("o{i}"), true, 0.95, 0.8, "x->y",
+            );
+        }
+        let _ = feedback.generate_recommendations("svc");
+        let count1 = feedback.get_recommendations().len();
+
+        // Second batch
+        for i in 5..10 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("o{i}"), true, 0.95, 0.8, "x->y",
+            );
+        }
+        let _ = feedback.generate_recommendations("svc");
+        let count2 = feedback.get_recommendations().len();
+
+        assert!(count2 >= count1);
+    }
+
+    // -----------------------------------------------------------------------
+    // 40. test_signal_pathway_key_preserved
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_signal_pathway_key_preserved() {
+        let feedback = FeedbackLoop::new();
+        let result = feedback.generate_signal(
+            "svc", "o1", true, 0.9, 0.8, "source->target",
+        );
+        assert!(result.is_ok());
+        if let Ok(s) = result {
+            assert_eq!(s.pathway_key, "source->target");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 41. test_multiple_pathways_independent_recommendations
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_multiple_pathways_independent_recommendations() {
+        let feedback = FeedbackLoop::new();
+        // Positive signals on pathway A
+        for i in 0..5 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("oA{i}"), true, 0.95, 0.8, "pathA",
+            );
+        }
+        // Negative signals on pathway B
+        for i in 0..5 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("oB{i}"), false, 0.6, 0.5, "pathB",
+            );
+        }
+
+        let recs = feedback.generate_recommendations("svc");
+        assert!(recs.is_ok());
+        if let Ok(r) = recs {
+            let path_a_rec = r.iter().find(|rec| rec.pathway_key == "pathA");
+            let path_b_rec = r.iter().find(|rec| rec.pathway_key == "pathB");
+
+            if let Some(a) = path_a_rec {
+                assert_eq!(a.recommendation_type, RecommendationType::StrengthenPathway);
+            }
+            if let Some(b) = path_b_rec {
+                assert!(
+                    b.recommendation_type == RecommendationType::WeakenPathway
+                        || b.recommendation_type == RecommendationType::PrunePathway
+                );
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 42. test_calibration_data_multiple_services
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_calibration_data_multiple_services() {
+        let feedback = FeedbackLoop::new();
+
+        for _ in 0..5 {
+            let _ = feedback.record_calibration("svc-a", 0.8, true);
+        }
+        for _ in 0..5 {
+            let _ = feedback.record_calibration("svc-b", 0.3, false);
+        }
+
+        let offset_a = feedback.get_calibration_offset("svc-a");
+        let offset_b = feedback.get_calibration_offset("svc-b");
+
+        assert!(offset_a > 0.0); // under-confident (predicted 0.8, actual 1.0)
+        assert!(offset_b < 0.0); // over-confident (predicted 0.3, actual 0.0)
+    }
+
+    // -----------------------------------------------------------------------
+    // 43. test_signal_count_after_clear
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_signal_count_after_clear() {
+        let feedback = FeedbackLoop::new();
+        for i in 0..10 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("o{i}"), true, 0.8, 0.7, "a->b",
+            );
+        }
+        assert_eq!(feedback.signal_count(), 10);
+
+        let future = Utc::now() + chrono::Duration::hours(1);
+        let removed = feedback.clear_old_signals(future);
+        assert_eq!(removed, 10);
+        assert_eq!(feedback.signal_count(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // 44. test_signal_strength_zero_effectiveness_success
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_signal_strength_zero_effectiveness_success() {
+        let feedback = FeedbackLoop::new();
+        let result = feedback.generate_signal("svc", "o1", true, 0.0, 0.5, "a->b");
+        assert!(result.is_ok());
+        if let Ok(s) = result {
+            // 0.0 < 0.7 threshold -> Exploration, strength = 0.0 * 0.5 = 0.0
+            assert_eq!(s.signal_type, SignalType::Exploration);
+            assert!((s.strength - 0.0).abs() < f64::EPSILON);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 45. test_recommendation_suggested_delta_sign
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_recommendation_suggested_delta_sign() {
+        let feedback = FeedbackLoop::new();
+        for i in 0..8 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("o{i}"), true, 0.95, 0.8, "strong->path",
+            );
+        }
+        let recs = feedback.generate_recommendations("svc");
+        assert!(recs.is_ok());
+        if let Ok(r) = recs {
+            for rec in &r {
+                if rec.recommendation_type == RecommendationType::StrengthenPathway {
+                    assert!(rec.suggested_delta > 0.0);
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 46. test_recent_signals_ordering
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_recent_signals_ordering() {
+        let feedback = FeedbackLoop::new();
+        for i in 0..5 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("o-{i}"), true, 0.8, 0.7, "a->b",
+            );
+        }
+
+        let recent = feedback.get_recent_signals(5);
+        assert_eq!(recent.len(), 5);
+        // Ordered oldest to newest
+        for i in 0..4 {
+            assert!(recent[i].timestamp <= recent[i + 1].timestamp);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 47. test_calibration_offset_perfectly_calibrated
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_calibration_offset_perfectly_calibrated() {
+        let feedback = FeedbackLoop::new();
+        // Predict 0.5, succeed 50% of the time
+        let _ = feedback.record_calibration("svc", 0.5, true);
+        let _ = feedback.record_calibration("svc", 0.5, false);
+        let _ = feedback.record_calibration("svc", 0.5, true);
+        let _ = feedback.record_calibration("svc", 0.5, false);
+
+        let offset = feedback.get_calibration_offset("svc");
+        // actual = 2/4 = 0.5, predicted avg = 0.5, offset = 0.0
+        assert!(offset.abs() < f64::EPSILON);
+    }
+
+    // -----------------------------------------------------------------------
+    // 48. test_prune_pathway_recommendation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_prune_pathway_recommendation() {
+        let feedback = FeedbackLoop::new();
+        // Very negative signals with high failure effectiveness
+        for i in 0..10 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("o{i}"), false, 0.9, 0.5, "bad->path",
+            );
+        }
+        let recs = feedback.generate_recommendations("svc");
+        assert!(recs.is_ok());
+        if let Ok(r) = recs {
+            let has_prune = r
+                .iter()
+                .any(|rec| rec.recommendation_type == RecommendationType::PrunePathway);
+            assert!(has_prune);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 49. test_mixed_signals_no_recommendation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_mixed_signals_no_recommendation() {
+        let feedback = FeedbackLoop::new();
+        // Equal positive and negative signals -> avg near 0, no strong recommendation
+        for i in 0..5 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("pos{i}"), true, 0.8, 0.7, "mixed->path",
+            );
+        }
+        for i in 0..5 {
+            let _ = feedback.generate_signal(
+                "svc", &format!("neg{i}"), false, 0.8, 0.7, "mixed->path",
+            );
+        }
+        let recs = feedback.generate_recommendations("svc");
+        assert!(recs.is_ok());
+        // With mixed signals, avg strength is near 0, so no strengthen/weaken
+        // for that specific pathway (might get calibration rec though)
+        if let Ok(r) = recs {
+            let mixed_path_rec = r
+                .iter()
+                .filter(|rec| rec.pathway_key == "mixed->path")
+                .count();
+            assert_eq!(mixed_path_rec, 0);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 50. test_feedback_loop_new_empty_state
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_feedback_loop_new_empty_state() {
+        let feedback = FeedbackLoop::new();
+        assert_eq!(feedback.signal_count(), 0);
+        assert!(feedback.get_recommendations().is_empty());
+        assert!(feedback.get_signals_for_service("any").is_empty());
+        assert!(feedback.get_recent_signals(10).is_empty());
+        assert!((feedback.get_calibration_offset("any") - 0.0).abs() < f64::EPSILON);
+    }
 }

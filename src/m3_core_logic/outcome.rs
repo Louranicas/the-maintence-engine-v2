@@ -860,6 +860,346 @@ mod tests {
     }
 
     #[test]
+    fn test_default_impl() {
+        let recorder = OutcomeRecorder::default();
+        assert_eq!(recorder.total_outcomes(), 0);
+    }
+
+    #[test]
+    fn test_record_zero_duration() {
+        let recorder = OutcomeRecorder::new();
+        let result = recorder.record(
+            "svc", "req-0d", IssueType::Crash, Severity::Critical,
+            test_action(), true, 0, 0.5, 0.5,
+        );
+        assert!(result.is_ok());
+        if let Ok(o) = result {
+            assert_eq!(o.duration_ms, 0);
+        }
+    }
+
+    #[test]
+    fn test_record_boundary_confidence_zero() {
+        let recorder = OutcomeRecorder::new();
+        let result = recorder.record(
+            "svc", "req-c0", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.0, 0.5,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_record_boundary_confidence_one() {
+        let recorder = OutcomeRecorder::new();
+        let result = recorder.record(
+            "svc", "req-c1", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 1.0, 0.5,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_record_boundary_effectiveness_zero() {
+        let recorder = OutcomeRecorder::new();
+        let result = recorder.record(
+            "svc", "req-e0", IssueType::Crash, Severity::Low,
+            test_action(), false, 100, 0.5, 0.0,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_record_boundary_effectiveness_one() {
+        let recorder = OutcomeRecorder::new();
+        let result = recorder.record(
+            "svc", "req-e1", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.5, 1.0,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pathway_delta_no_history() {
+        let recorder = OutcomeRecorder::new();
+        // No outcomes -> effectiveness = 0.0
+        let delta = recorder.calculate_pathway_delta("unknown", &test_action(), true);
+        // LTP: 0.1 * 0.0 = 0.0
+        assert!((delta - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_pathway_delta_failure_no_history() {
+        let recorder = OutcomeRecorder::new();
+        let delta = recorder.calculate_pathway_delta("unknown", &test_action(), false);
+        // LTD: -0.05 * (1.0 - 0.0) = -0.05
+        assert!((delta - (-LTD_RATE)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_pathway_delta_perfect_effectiveness() {
+        let recorder = OutcomeRecorder::new();
+        let _ = recorder.record(
+            "svc", "req", IssueType::Crash, Severity::High,
+            test_action(), true, 100, 0.8, 1.0,
+        );
+        let delta = recorder.calculate_pathway_delta("svc", &test_action(), true);
+        // LTP: 0.1 * 1.0 = 0.1
+        assert!((delta - LTP_RATE).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_get_trend_empty_service() {
+        let recorder = OutcomeRecorder::new();
+        let trend = recorder.get_trend("nonexistent", 10);
+        assert!(trend.is_empty());
+    }
+
+    #[test]
+    fn test_get_trend_fewer_than_requested() {
+        let recorder = OutcomeRecorder::new();
+        let _ = recorder.record(
+            "svc", "r1", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.8, 0.5,
+        );
+        let _ = recorder.record(
+            "svc", "r2", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.8, 0.7,
+        );
+        let trend = recorder.get_trend("svc", 10);
+        assert_eq!(trend.len(), 2);
+    }
+
+    #[test]
+    fn test_get_trend_exact_count() {
+        let recorder = OutcomeRecorder::new();
+        for i in 0..5 {
+            let eff = (i as f64 + 1.0) / 10.0;
+            let _ = recorder.record(
+                "svc", &format!("r{i}"), IssueType::Crash, Severity::Low,
+                test_action(), true, 100, 0.8, eff,
+            );
+        }
+        let trend = recorder.get_trend("svc", 5);
+        assert_eq!(trend.len(), 5);
+    }
+
+    #[test]
+    fn test_effectiveness_single_outcome() {
+        let recorder = OutcomeRecorder::new();
+        let _ = recorder.record(
+            "svc", "r1", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.8, 0.75,
+        );
+        let eff = recorder.get_effectiveness("svc", &test_action());
+        assert!((eff - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_effectiveness_no_matching_action() {
+        let recorder = OutcomeRecorder::new();
+        let _ = recorder.record(
+            "svc", "r1", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.8, 0.9,
+        );
+        let eff = recorder.get_effectiveness("svc", &alt_action());
+        assert!((eff - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_action_success_rate_no_matches() {
+        let recorder = OutcomeRecorder::new();
+        let rate = recorder.get_action_success_rate(&alt_action());
+        assert!((rate - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_action_success_rate_all_success() {
+        let recorder = OutcomeRecorder::new();
+        for i in 0..4 {
+            let _ = recorder.record(
+                &format!("svc-{i}"), &format!("r{i}"), IssueType::Crash,
+                Severity::Low, test_action(), true, 100, 0.8, 0.9,
+            );
+        }
+        let rate = recorder.get_action_success_rate(&test_action());
+        assert!((rate - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_action_success_rate_all_failure() {
+        let recorder = OutcomeRecorder::new();
+        for i in 0..3 {
+            let _ = recorder.record(
+                &format!("svc-{i}"), &format!("r{i}"), IssueType::Crash,
+                Severity::Low, test_action(), false, 100, 0.8, 0.1,
+            );
+        }
+        let rate = recorder.get_action_success_rate(&test_action());
+        assert!((rate - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_overall_success_rate_all_success() {
+        let recorder = OutcomeRecorder::new();
+        for i in 0..5 {
+            let _ = recorder.record(
+                "svc", &format!("r{i}"), IssueType::Crash,
+                Severity::Low, test_action(), true, 100, 0.8, 0.9,
+            );
+        }
+        assert!((recorder.overall_success_rate() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_overall_success_rate_all_failure() {
+        let recorder = OutcomeRecorder::new();
+        for i in 0..5 {
+            let _ = recorder.record(
+                "svc", &format!("r{i}"), IssueType::Crash,
+                Severity::Low, test_action(), false, 100, 0.8, 0.1,
+            );
+        }
+        assert!((recorder.overall_success_rate() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_aggregate_avg_confidence() {
+        let recorder = OutcomeRecorder::new();
+        let _ = recorder.record(
+            "svc", "r1", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.6, 0.9,
+        );
+        let _ = recorder.record(
+            "svc", "r2", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.8, 0.9,
+        );
+        let agg = recorder.get_aggregate("svc");
+        assert!(agg.is_ok());
+        if let Ok(a) = agg {
+            assert!((a.avg_confidence - 0.7).abs() < f64::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_aggregate_not_found() {
+        let recorder = OutcomeRecorder::new();
+        let result = recorder.get_aggregate("nonexistent");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_service_outcomes_cross_service() {
+        let recorder = OutcomeRecorder::new();
+        for i in 0..3 {
+            let _ = recorder.record(
+                "svc-a", &format!("ra{i}"), IssueType::Crash,
+                Severity::Low, test_action(), true, 100, 0.8, 0.9,
+            );
+        }
+        for i in 0..2 {
+            let _ = recorder.record(
+                "svc-b", &format!("rb{i}"), IssueType::Crash,
+                Severity::Low, test_action(), true, 100, 0.8, 0.9,
+            );
+        }
+        assert_eq!(recorder.get_service_outcomes("svc-a").len(), 3);
+        assert_eq!(recorder.get_service_outcomes("svc-b").len(), 2);
+        assert_eq!(recorder.total_outcomes(), 5);
+    }
+
+    #[test]
+    fn test_outcome_record_has_uuid_id() {
+        let recorder = OutcomeRecorder::new();
+        let result = recorder.record(
+            "svc", "req", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.5, 0.5,
+        );
+        assert!(result.is_ok());
+        if let Ok(o) = result {
+            assert!(!o.id.is_empty());
+            assert_eq!(o.id.len(), 36);
+        }
+    }
+
+    #[test]
+    fn test_outcome_record_timestamp() {
+        let recorder = OutcomeRecorder::new();
+        let before = Utc::now();
+        let result = recorder.record(
+            "svc", "req", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.5, 0.5,
+        );
+        let after = Utc::now();
+        assert!(result.is_ok());
+        if let Ok(o) = result {
+            assert!(o.timestamp >= before);
+            assert!(o.timestamp <= after);
+        }
+    }
+
+    #[test]
+    fn test_outcome_side_effects_empty_initially() {
+        let recorder = OutcomeRecorder::new();
+        let result = recorder.record(
+            "svc", "req", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.5, 0.5,
+        );
+        assert!(result.is_ok());
+        if let Ok(o) = result {
+            assert!(o.side_effects.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_get_outcome_after_eviction() {
+        let recorder = OutcomeRecorder::new();
+        // Record first outcome
+        let first = recorder.record(
+            "svc", "first", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.5, 0.5,
+        );
+        assert!(first.is_ok());
+
+        // Fill to capacity to cause eviction of first
+        for i in 0..OUTCOME_CAP {
+            let _ = recorder.record(
+                "svc", &format!("fill-{i}"), IssueType::Crash, Severity::Low,
+                test_action(), true, 100, 0.5, 0.5,
+            );
+        }
+
+        // First outcome should be evicted
+        if let Ok(f) = first {
+            let result = recorder.get_outcome(&f.id);
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_aggregate_single_outcome() {
+        let recorder = OutcomeRecorder::new();
+        let _ = recorder.record(
+            "svc-single", "r1", IssueType::Crash, Severity::High,
+            test_action(), true, 250, 0.9, 0.85,
+        );
+        let agg = recorder.get_aggregate("svc-single");
+        assert!(agg.is_ok());
+        if let Ok(a) = agg {
+            assert_eq!(a.total_outcomes, 1);
+            assert_eq!(a.successful_outcomes, 1);
+            assert!((a.avg_duration_ms - 250.0).abs() < f64::EPSILON);
+            assert!((a.avg_effectiveness - 0.85).abs() < f64::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_ltp_ltd_rates() {
+        // Verify constants are correct
+        assert!((LTP_RATE - 0.1).abs() < f64::EPSILON);
+        assert!((LTD_RATE - 0.05).abs() < f64::EPSILON);
+    }
+
+    #[test]
     fn test_multiple_actions_best_worst() {
         let recorder = OutcomeRecorder::new();
 
@@ -892,6 +1232,162 @@ mod tests {
             // Worst action should be retry (avg 0.15)
             assert_eq!(stats.best_action, Some(test_action()));
             assert_eq!(stats.worst_action, Some(alt_action()));
+        }
+    }
+
+    #[test]
+    fn test_record_all_issue_types() {
+        let recorder = OutcomeRecorder::new();
+        let issue_types = [
+            IssueType::HealthFailure,
+            IssueType::LatencySpike,
+            IssueType::ErrorRateHigh,
+            IssueType::MemoryPressure,
+            IssueType::DiskPressure,
+            IssueType::ConnectionFailure,
+            IssueType::Timeout,
+            IssueType::Crash,
+        ];
+        for (i, issue) in issue_types.iter().enumerate() {
+            let result = recorder.record(
+                "svc", &format!("req-it-{i}"), *issue, Severity::Medium,
+                test_action(), true, 100, 0.8, 0.9,
+            );
+            assert!(result.is_ok());
+        }
+        assert_eq!(recorder.total_outcomes(), 8);
+    }
+
+    #[test]
+    fn test_record_all_severities() {
+        let recorder = OutcomeRecorder::new();
+        let severities = [
+            Severity::Low,
+            Severity::Medium,
+            Severity::High,
+            Severity::Critical,
+        ];
+        for (i, sev) in severities.iter().enumerate() {
+            let result = recorder.record(
+                "svc", &format!("req-sev-{i}"), IssueType::Crash, *sev,
+                test_action(), true, 100, 0.8, 0.9,
+            );
+            assert!(result.is_ok());
+        }
+        assert_eq!(recorder.total_outcomes(), 4);
+    }
+
+    #[test]
+    fn test_effectiveness_average_multiple() {
+        let recorder = OutcomeRecorder::new();
+        let action = test_action();
+        let _ = recorder.record(
+            "svc", "r1", IssueType::Crash, Severity::Low,
+            action.clone(), true, 100, 0.8, 0.2,
+        );
+        let _ = recorder.record(
+            "svc", "r2", IssueType::Crash, Severity::Low,
+            action.clone(), true, 100, 0.8, 0.4,
+        );
+        let _ = recorder.record(
+            "svc", "r3", IssueType::Crash, Severity::Low,
+            action.clone(), true, 100, 0.8, 0.6,
+        );
+        let eff = recorder.get_effectiveness("svc", &action);
+        // (0.2 + 0.4 + 0.6) / 3 = 0.4
+        assert!((eff - 0.4).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_pathway_delta_half_effectiveness() {
+        let recorder = OutcomeRecorder::new();
+        let action = test_action();
+        let _ = recorder.record(
+            "svc", "r1", IssueType::Crash, Severity::Low,
+            action.clone(), true, 100, 0.8, 0.5,
+        );
+        // LTP: 0.1 * 0.5 = 0.05
+        let delta = recorder.calculate_pathway_delta("svc", &action, true);
+        assert!((delta - 0.05).abs() < f64::EPSILON);
+
+        // LTD: -0.05 * (1.0 - 0.5) = -0.025
+        let delta_fail = recorder.calculate_pathway_delta("svc", &action, false);
+        assert!((delta_fail - (-0.025)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_aggregate_avg_duration() {
+        let recorder = OutcomeRecorder::new();
+        let _ = recorder.record(
+            "svc", "r1", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.8, 0.9,
+        );
+        let _ = recorder.record(
+            "svc", "r2", IssueType::Crash, Severity::Low,
+            test_action(), true, 300, 0.8, 0.9,
+        );
+        let _ = recorder.record(
+            "svc", "r3", IssueType::Crash, Severity::Low,
+            test_action(), true, 500, 0.8, 0.9,
+        );
+        let agg = recorder.get_aggregate("svc");
+        assert!(agg.is_ok());
+        if let Ok(a) = agg {
+            // (100 + 300 + 500) / 3 = 300.0
+            assert!((a.avg_duration_ms - 300.0).abs() < f64::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_get_trend_zero_requested() {
+        let recorder = OutcomeRecorder::new();
+        let _ = recorder.record(
+            "svc", "r1", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.8, 0.5,
+        );
+        let trend = recorder.get_trend("svc", 0);
+        assert!(trend.is_empty());
+    }
+
+    #[test]
+    fn test_get_trend_single_outcome() {
+        let recorder = OutcomeRecorder::new();
+        let _ = recorder.record(
+            "svc", "r1", IssueType::Crash, Severity::Low,
+            test_action(), true, 100, 0.8, 0.77,
+        );
+        let trend = recorder.get_trend("svc", 5);
+        assert_eq!(trend.len(), 1);
+        assert!((trend[0] - 0.77).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_record_preserves_issue_type() {
+        let recorder = OutcomeRecorder::new();
+        let result = recorder.record(
+            "svc", "r1", IssueType::LatencySpike, Severity::High,
+            test_action(), true, 100, 0.8, 0.9,
+        );
+        assert!(result.is_ok());
+        if let Ok(o) = result {
+            assert_eq!(o.issue_type, IssueType::LatencySpike);
+            assert_eq!(o.severity, Severity::High);
+        }
+    }
+
+    #[test]
+    fn test_record_preserves_action_taken() {
+        let recorder = OutcomeRecorder::new();
+        let action = alt_action();
+        let result = recorder.record(
+            "svc", "r1", IssueType::Crash, Severity::Low,
+            action.clone(), false, 200, 0.5, 0.3,
+        );
+        assert!(result.is_ok());
+        if let Ok(o) = result {
+            assert_eq!(o.action_taken, action);
+            assert!(!o.success);
+            assert_eq!(o.duration_ms, 200);
         }
     }
 }

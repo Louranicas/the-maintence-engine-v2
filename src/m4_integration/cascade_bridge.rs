@@ -499,4 +499,436 @@ mod tests {
         assert_eq!(bridge.config().poll_interval_secs, DEFAULT_POLL_INTERVAL_SECS);
         assert!((bridge.config().amplification_threshold - DEFAULT_AMPLIFICATION_THRESHOLD).abs() < f64::EPSILON);
     }
+
+    // --- Additional tests to reach 50+ ---
+
+    #[test]
+    fn test_default_creates_same_as_new() {
+        let d = CascadeBridge::default();
+        let n = CascadeBridge::new();
+        assert_eq!(d.window_size(), n.window_size());
+        assert_eq!(d.consecutive_failures(), n.consecutive_failures());
+    }
+
+    #[test]
+    fn test_config_default_diagnostics_url() {
+        let config = CascadeBridgeConfig::default();
+        assert_eq!(config.diagnostics_url, DEFAULT_DIAGNOSTICS_URL);
+    }
+
+    #[test]
+    fn test_config_default_poll_interval() {
+        let config = CascadeBridgeConfig::default();
+        assert_eq!(config.poll_interval_secs, DEFAULT_POLL_INTERVAL_SECS);
+    }
+
+    #[test]
+    fn test_config_default_window_capacity() {
+        let config = CascadeBridgeConfig::default();
+        assert_eq!(config.window_capacity, DEFAULT_WINDOW_CAPACITY);
+    }
+
+    #[test]
+    fn test_config_default_amplification_threshold() {
+        let config = CascadeBridgeConfig::default();
+        assert!((config.amplification_threshold - DEFAULT_AMPLIFICATION_THRESHOLD).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_custom_config_diagnostics_url() {
+        let config = CascadeBridgeConfig {
+            diagnostics_url: "http://custom:9090/diag".to_string(),
+            ..Default::default()
+        };
+        let bridge = CascadeBridge::with_config(config);
+        assert_eq!(bridge.config().diagnostics_url, "http://custom:9090/diag");
+    }
+
+    #[test]
+    fn test_custom_config_threshold() {
+        let config = CascadeBridgeConfig {
+            amplification_threshold: 100.0,
+            ..Default::default()
+        };
+        let bridge = CascadeBridge::with_config(config);
+        // Below custom threshold => no anomaly
+        bridge.record_snapshot(make_snapshot(99.0, 0));
+        assert!(bridge.anomalies().is_empty());
+        // Above custom threshold => anomaly
+        bridge.record_snapshot(make_snapshot(101.0, 0));
+        assert_eq!(bridge.anomalies().len(), 1);
+    }
+
+    #[test]
+    fn test_latest_snapshot_returns_most_recent() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(10.0, 0));
+        bridge.record_snapshot(make_snapshot(20.0, 1));
+        bridge.record_snapshot(make_snapshot(30.0, 2));
+        let latest = bridge.latest_snapshot();
+        assert!(latest.is_some());
+        let snap = latest.unwrap_or_else(|| make_snapshot(0.0, 0));
+        assert!((snap.total_amplification - 30.0).abs() < f64::EPSILON);
+        assert_eq!(snap.open_breakers, 2);
+    }
+
+    #[test]
+    fn test_window_eviction_preserves_latest() {
+        let config = CascadeBridgeConfig {
+            window_capacity: 3,
+            ..Default::default()
+        };
+        let bridge = CascadeBridge::with_config(config);
+        for i in 0..5 {
+            #[allow(clippy::cast_precision_loss)]
+            bridge.record_snapshot(make_snapshot(i as f64 * 10.0, 0));
+        }
+        assert_eq!(bridge.window_size(), 3);
+        let latest = bridge.latest_snapshot();
+        assert!(latest.is_some());
+        let snap = latest.unwrap_or_else(|| make_snapshot(0.0, 0));
+        assert!((snap.total_amplification - 40.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_multiple_anomalies_accumulated() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(600.0, 1));
+        bridge.record_snapshot(make_snapshot(700.0, 2));
+        bridge.record_snapshot(make_snapshot(800.0, 3));
+        assert_eq!(bridge.anomalies().len(), 3);
+    }
+
+    #[test]
+    fn test_anomaly_records_correct_threshold() {
+        let config = CascadeBridgeConfig {
+            amplification_threshold: 250.0,
+            ..Default::default()
+        };
+        let bridge = CascadeBridge::with_config(config);
+        bridge.record_snapshot(make_snapshot(300.0, 0));
+        let anomalies = bridge.anomalies();
+        assert_eq!(anomalies.len(), 1);
+        assert!((anomalies[0].threshold - 250.0).abs() < f64::EPSILON);
+        assert!((anomalies[0].amplification - 300.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_anomaly_records_open_breakers() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(999.0, 5));
+        let anomalies = bridge.anomalies();
+        assert_eq!(anomalies.len(), 1);
+        assert_eq!(anomalies[0].open_breakers, 5);
+    }
+
+    #[test]
+    fn test_check_anomaly_returns_none_below_threshold() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(100.0, 0));
+        assert!(bridge.check_anomaly().is_none());
+    }
+
+    #[test]
+    fn test_check_anomaly_returns_none_empty() {
+        let bridge = CascadeBridge::new();
+        assert!(bridge.check_anomaly().is_none());
+    }
+
+    #[test]
+    fn test_check_anomaly_returns_correct_stage_count() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(600.0, 0));
+        if let Some((_, stages, _)) = bridge.check_anomaly() {
+            assert_eq!(stages, CASCADE_STAGE_COUNT);
+        } else {
+            panic!("expected anomaly");
+        }
+    }
+
+    #[test]
+    fn test_degraded_at_exactly_max_failures() {
+        let bridge = CascadeBridge::new();
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            bridge.record_failure();
+        }
+        assert!(bridge.is_degraded());
+    }
+
+    #[test]
+    fn test_not_degraded_one_below_max_failures() {
+        let bridge = CascadeBridge::new();
+        for _ in 0..(MAX_CONSECUTIVE_FAILURES - 1) {
+            bridge.record_failure();
+        }
+        assert!(!bridge.is_degraded());
+    }
+
+    #[test]
+    fn test_health_degraded_flag() {
+        let bridge = CascadeBridge::new();
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            bridge.record_failure();
+        }
+        let h = bridge.health();
+        assert!(h.degraded);
+        assert_eq!(h.consecutive_failures, MAX_CONSECUTIVE_FAILURES);
+    }
+
+    #[test]
+    fn test_health_consecutive_failures_reported() {
+        let bridge = CascadeBridge::new();
+        bridge.record_failure();
+        bridge.record_failure();
+        bridge.record_failure();
+        let h = bridge.health();
+        assert_eq!(h.consecutive_failures, 3);
+    }
+
+    #[test]
+    fn test_health_open_breakers_from_latest() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(10.0, 3));
+        let h = bridge.health();
+        assert_eq!(h.open_breakers, 3);
+    }
+
+    #[test]
+    fn test_health_max_amplification() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(10.0, 0));
+        bridge.record_snapshot(make_snapshot(400.0, 0));
+        bridge.record_snapshot(make_snapshot(50.0, 0));
+        let h = bridge.health();
+        assert!((h.max_amplification - 400.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_health_avg_amplification_single_snapshot() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(42.0, 0));
+        let h = bridge.health();
+        assert!((h.avg_amplification - 42.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_reset_clears_anomalies() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(999.0, 0));
+        assert!(!bridge.anomalies().is_empty());
+        bridge.reset();
+        assert!(bridge.anomalies().is_empty());
+    }
+
+    #[test]
+    fn test_reset_clears_snapshots() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(10.0, 0));
+        bridge.reset();
+        assert_eq!(bridge.window_size(), 0);
+        assert!(bridge.latest_snapshot().is_none());
+    }
+
+    #[test]
+    fn test_reset_clears_failures() {
+        let bridge = CascadeBridge::new();
+        bridge.record_failure();
+        bridge.record_failure();
+        bridge.reset();
+        assert_eq!(bridge.consecutive_failures(), 0);
+    }
+
+    #[test]
+    fn test_snapshot_with_stages() {
+        let snap = CascadePipelineSnapshot {
+            stages: vec![
+                CascadeStageSnapshot {
+                    stage_index: 0,
+                    amplification: 1.5,
+                    circuit_breaker_open: false,
+                    signals_processed: 100,
+                },
+                CascadeStageSnapshot {
+                    stage_index: 1,
+                    amplification: 2.0,
+                    circuit_breaker_open: true,
+                    signals_processed: 50,
+                },
+            ],
+            total_amplification: 3.5,
+            open_breakers: 1,
+            timestamp: Utc::now(),
+        };
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(snap);
+        let latest = bridge.latest_snapshot();
+        assert!(latest.is_some());
+        let s = latest.unwrap_or_else(|| make_snapshot(0.0, 0));
+        assert_eq!(s.stages.len(), 2);
+    }
+
+    #[test]
+    fn test_stage_snapshot_clone() {
+        let stage = CascadeStageSnapshot {
+            stage_index: 5,
+            amplification: 2.5,
+            circuit_breaker_open: true,
+            signals_processed: 999,
+        };
+        let cloned = stage.clone();
+        assert_eq!(cloned.stage_index, 5);
+        assert!((cloned.amplification - 2.5).abs() < f64::EPSILON);
+        assert!(cloned.circuit_breaker_open);
+        assert_eq!(cloned.signals_processed, 999);
+    }
+
+    #[test]
+    fn test_cascade_anomaly_clone() {
+        let anomaly = CascadeAnomaly {
+            amplification: 1000.0,
+            threshold: 500.0,
+            open_breakers: 4,
+            detected_at: Utc::now(),
+        };
+        let cloned = anomaly.clone();
+        assert!((cloned.amplification - 1000.0).abs() < f64::EPSILON);
+        assert_eq!(cloned.open_breakers, 4);
+    }
+
+    #[test]
+    fn test_cascade_health_clone() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(42.0, 1));
+        let h = bridge.health();
+        let cloned = h.clone();
+        assert!((cloned.current_amplification - 42.0).abs() < f64::EPSILON);
+        assert_eq!(cloned.open_breakers, 1);
+    }
+
+    #[test]
+    fn test_config_serialization() {
+        let config = CascadeBridgeConfig::default();
+        let json = serde_json::to_string(&config);
+        assert!(json.is_ok());
+        let parsed: std::result::Result<CascadeBridgeConfig, _> =
+            serde_json::from_str(&json.unwrap_or_default());
+        assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn test_pipeline_snapshot_serialization() {
+        let snap = make_snapshot(42.0, 2);
+        let json = serde_json::to_string(&snap);
+        assert!(json.is_ok());
+    }
+
+    #[test]
+    fn test_anomaly_serialization() {
+        let anomaly = CascadeAnomaly {
+            amplification: 600.0,
+            threshold: 500.0,
+            open_breakers: 1,
+            detected_at: Utc::now(),
+        };
+        let json = serde_json::to_string(&anomaly);
+        assert!(json.is_ok());
+    }
+
+    #[test]
+    fn test_health_serialization() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(10.0, 0));
+        let h = bridge.health();
+        let json = serde_json::to_string(&h);
+        assert!(json.is_ok());
+    }
+
+    #[test]
+    fn test_record_snapshot_alternating_normal_anomaly() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(100.0, 0)); // normal
+        bridge.record_snapshot(make_snapshot(600.0, 1)); // anomaly
+        bridge.record_snapshot(make_snapshot(200.0, 0)); // normal
+        bridge.record_snapshot(make_snapshot(700.0, 2)); // anomaly
+        assert_eq!(bridge.anomalies().len(), 2);
+        assert_eq!(bridge.window_size(), 4);
+    }
+
+    #[test]
+    fn test_failure_then_success_then_failure() {
+        let bridge = CascadeBridge::new();
+        bridge.record_failure();
+        bridge.record_failure();
+        assert_eq!(bridge.consecutive_failures(), 2);
+        bridge.record_snapshot(make_snapshot(1.0, 0)); // resets
+        assert_eq!(bridge.consecutive_failures(), 0);
+        bridge.record_failure();
+        assert_eq!(bridge.consecutive_failures(), 1);
+    }
+
+    #[test]
+    fn test_health_not_anomaly_when_below_threshold() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(499.0, 0));
+        let h = bridge.health();
+        assert!(!h.anomaly_detected);
+    }
+
+    #[test]
+    fn test_health_anomaly_at_exact_threshold() {
+        let bridge = CascadeBridge::new();
+        // At exactly the threshold, it should NOT be anomalous (> not >=)
+        bridge.record_snapshot(make_snapshot(500.0, 0));
+        let h = bridge.health();
+        assert!(!h.anomaly_detected);
+    }
+
+    #[test]
+    fn test_health_anomaly_just_above_threshold() {
+        let bridge = CascadeBridge::new();
+        bridge.record_snapshot(make_snapshot(500.1, 0));
+        let h = bridge.health();
+        assert!(h.anomaly_detected);
+    }
+
+    #[test]
+    fn test_window_capacity_one() {
+        let config = CascadeBridgeConfig {
+            window_capacity: 1,
+            ..Default::default()
+        };
+        let bridge = CascadeBridge::with_config(config);
+        bridge.record_snapshot(make_snapshot(10.0, 0));
+        bridge.record_snapshot(make_snapshot(20.0, 0));
+        assert_eq!(bridge.window_size(), 1);
+        let latest = bridge.latest_snapshot();
+        assert!(latest.is_some());
+        let snap = latest.unwrap_or_else(|| make_snapshot(0.0, 0));
+        assert!((snap.total_amplification - 20.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_many_failures_beyond_degraded() {
+        let bridge = CascadeBridge::new();
+        for _ in 0..50 {
+            bridge.record_failure();
+        }
+        assert!(bridge.is_degraded());
+        assert_eq!(bridge.consecutive_failures(), 50);
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let config = CascadeBridgeConfig {
+            diagnostics_url: "http://test:1234".to_string(),
+            poll_interval_secs: 42,
+            window_capacity: 100,
+            amplification_threshold: 999.0,
+        };
+        let cloned = config.clone();
+        assert_eq!(cloned.diagnostics_url, "http://test:1234");
+        assert_eq!(cloned.poll_interval_secs, 42);
+        assert_eq!(cloned.window_capacity, 100);
+        assert!((cloned.amplification_threshold - 999.0).abs() < f64::EPSILON);
+    }
 }

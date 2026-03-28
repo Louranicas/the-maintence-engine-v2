@@ -732,4 +732,423 @@ mod tests {
         assert_eq!(format!("{}", BridgeStatus::Failed), "Failed");
         assert_eq!(format!("{}", BridgeStatus::Disconnected), "Disconnected");
     }
+
+    // --- Additional tests to reach 50+ ---
+
+    #[test]
+    fn test_default_creates_same_as_new() {
+        let d = BridgeManager::default();
+        let n = BridgeManager::new();
+        assert_eq!(d.bridge_count(), n.bridge_count());
+        // Both should have wire weights
+        assert_eq!(d.wire_weights().len(), n.wire_weights().len());
+    }
+
+    #[test]
+    fn test_register_bridge_with_grpc_protocol() {
+        let mgr = BridgeManager::new();
+        let result = mgr.register_bridge("a", "b", WireProtocol::Grpc);
+        assert!(result.is_ok());
+        let bridge_id = result.unwrap_or_default();
+        let bridge = mgr.get_bridge(&bridge_id).unwrap_or_else(|_| ServiceBridge {
+            bridge_id: String::new(),
+            source_service: String::new(),
+            target_service: String::new(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Disconnected,
+            health_score: 0.0,
+            latency_ms: 0.0,
+            request_count: 0,
+            error_count: 0,
+            created_at: Utc::now(),
+            last_active: None,
+        });
+        assert_eq!(bridge.protocol, WireProtocol::Grpc);
+    }
+
+    #[test]
+    fn test_register_bridge_with_ws_protocol() {
+        let mgr = BridgeManager::new();
+        let result = mgr.register_bridge("a", "b", WireProtocol::WebSocket);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_register_bridge_with_ipc_protocol() {
+        let mgr = BridgeManager::new();
+        let result = mgr.register_bridge("a", "b", WireProtocol::Ipc);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_register_bridge_initial_health_is_one() {
+        let mgr = BridgeManager::new();
+        let bridge_id = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        let bridge = mgr.get_bridge(&bridge_id).unwrap_or_else(|_| ServiceBridge {
+            bridge_id: String::new(),
+            source_service: String::new(),
+            target_service: String::new(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Disconnected,
+            health_score: 0.0,
+            latency_ms: 0.0,
+            request_count: 0,
+            error_count: 0,
+            created_at: Utc::now(),
+            last_active: None,
+        });
+        assert!((bridge.health_score - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_register_bridge_initial_counts_are_zero() {
+        let mgr = BridgeManager::new();
+        let bridge_id = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        let bridge = mgr.get_bridge(&bridge_id).unwrap_or_else(|_| ServiceBridge {
+            bridge_id: String::new(),
+            source_service: String::new(),
+            target_service: String::new(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Disconnected,
+            health_score: 0.0,
+            latency_ms: 0.0,
+            request_count: 0,
+            error_count: 0,
+            created_at: Utc::now(),
+            last_active: None,
+        });
+        assert_eq!(bridge.request_count, 0);
+        assert_eq!(bridge.error_count, 0);
+        assert!(bridge.last_active.is_none());
+    }
+
+    #[test]
+    fn test_register_bridge_uuid_id() {
+        let mgr = BridgeManager::new();
+        let bridge_id = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        assert_eq!(bridge_id.len(), 36); // UUID format
+    }
+
+    #[test]
+    fn test_get_bridge_nonexistent() {
+        let mgr = BridgeManager::new();
+        let result = mgr.get_bridge("nonexistent-id");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_health_clamping_below_zero() {
+        let mgr = BridgeManager::new();
+        let bridge_id = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        assert!(mgr.update_health(&bridge_id, -1.0).is_ok());
+        let bridge = mgr.get_bridge(&bridge_id).unwrap_or_else(|_| ServiceBridge {
+            bridge_id: String::new(),
+            source_service: String::new(),
+            target_service: String::new(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Disconnected,
+            health_score: 0.5,
+            latency_ms: 0.0,
+            request_count: 0,
+            error_count: 0,
+            created_at: Utc::now(),
+            last_active: None,
+        });
+        assert!(bridge.health_score.abs() < f64::EPSILON);
+        assert_eq!(bridge.status, BridgeStatus::Failed);
+    }
+
+    #[test]
+    fn test_update_health_exact_boundary_07() {
+        let mgr = BridgeManager::new();
+        let bridge_id = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        assert!(mgr.update_health(&bridge_id, 0.7).is_ok());
+        let bridge = mgr.get_bridge(&bridge_id).unwrap_or_else(|_| ServiceBridge {
+            bridge_id: String::new(),
+            source_service: String::new(),
+            target_service: String::new(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Disconnected,
+            health_score: 0.0,
+            latency_ms: 0.0,
+            request_count: 0,
+            error_count: 0,
+            created_at: Utc::now(),
+            last_active: None,
+        });
+        assert_eq!(bridge.status, BridgeStatus::Active);
+    }
+
+    #[test]
+    fn test_update_health_exact_boundary_03() {
+        let mgr = BridgeManager::new();
+        let bridge_id = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        assert!(mgr.update_health(&bridge_id, 0.3).is_ok());
+        let bridge = mgr.get_bridge(&bridge_id).unwrap_or_else(|_| ServiceBridge {
+            bridge_id: String::new(),
+            source_service: String::new(),
+            target_service: String::new(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Disconnected,
+            health_score: 0.0,
+            latency_ms: 0.0,
+            request_count: 0,
+            error_count: 0,
+            created_at: Utc::now(),
+            last_active: None,
+        });
+        assert_eq!(bridge.status, BridgeStatus::Degraded);
+    }
+
+    #[test]
+    fn test_record_request_latency_running_average() {
+        let mgr = BridgeManager::new();
+        let bridge_id = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        assert!(mgr.record_request(&bridge_id, 100.0, true).is_ok());
+        assert!(mgr.record_request(&bridge_id, 200.0, true).is_ok());
+        let bridge = mgr.get_bridge(&bridge_id).unwrap_or_else(|_| ServiceBridge {
+            bridge_id: String::new(),
+            source_service: String::new(),
+            target_service: String::new(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Disconnected,
+            health_score: 0.0,
+            latency_ms: 0.0,
+            request_count: 0,
+            error_count: 0,
+            created_at: Utc::now(),
+            last_active: None,
+        });
+        assert!((bridge.latency_ms - 150.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_record_request_all_failures() {
+        let mgr = BridgeManager::new();
+        let bridge_id = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        assert!(mgr.record_request(&bridge_id, 10.0, false).is_ok());
+        assert!(mgr.record_request(&bridge_id, 10.0, false).is_ok());
+        let bridge = mgr.get_bridge(&bridge_id).unwrap_or_else(|_| ServiceBridge {
+            bridge_id: String::new(),
+            source_service: String::new(),
+            target_service: String::new(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Disconnected,
+            health_score: 0.0,
+            latency_ms: 0.0,
+            request_count: 0,
+            error_count: 0,
+            created_at: Utc::now(),
+            last_active: None,
+        });
+        assert_eq!(bridge.error_count, 2);
+        assert!((bridge.error_rate() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_record_request_sets_last_active() {
+        let mgr = BridgeManager::new();
+        let bridge_id = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        assert!(mgr.record_request(&bridge_id, 5.0, true).is_ok());
+        let bridge = mgr.get_bridge(&bridge_id).unwrap_or_else(|_| ServiceBridge {
+            bridge_id: String::new(),
+            source_service: String::new(),
+            target_service: String::new(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Disconnected,
+            health_score: 0.0,
+            latency_ms: 0.0,
+            request_count: 0,
+            error_count: 0,
+            created_at: Utc::now(),
+            last_active: None,
+        });
+        assert!(bridge.last_active.is_some());
+    }
+
+    #[test]
+    fn test_bridges_for_service_empty() {
+        let mgr = BridgeManager::new();
+        let bridges = mgr.get_bridges_for_service("nonexistent");
+        assert!(bridges.is_empty());
+    }
+
+    #[test]
+    fn test_bridges_for_service_as_target() {
+        let mgr = BridgeManager::new();
+        let _b = mgr.register_bridge("src", "tgt", WireProtocol::Rest);
+        let bridges = mgr.get_bridges_for_service("tgt");
+        assert_eq!(bridges.len(), 1);
+    }
+
+    #[test]
+    fn test_get_synergy_nonexistent_pair_is_zero() {
+        let mgr = BridgeManager::new();
+        assert!(mgr.get_synergy("nonexistent-a", "nonexistent-b").abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_update_synergy_clamping_below_zero() {
+        let mgr = BridgeManager::new();
+        assert!(mgr.update_synergy("a", "b", -0.5).is_ok());
+        assert!(mgr.get_synergy("a", "b").abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_synergy_overwrite() {
+        let mgr = BridgeManager::new();
+        assert!(mgr.update_synergy("a", "b", 0.5).is_ok());
+        assert!(mgr.update_synergy("a", "b", 0.9).is_ok());
+        assert!((mgr.get_synergy("a", "b") - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_active_bridges_empty_initially() {
+        let mgr = BridgeManager::new();
+        assert!(mgr.get_active_bridges().is_empty());
+    }
+
+    #[test]
+    fn test_failed_bridges_empty_initially() {
+        let mgr = BridgeManager::new();
+        assert!(mgr.get_failed_bridges().is_empty());
+    }
+
+    #[test]
+    fn test_bridge_status_eq() {
+        assert_eq!(BridgeStatus::Active, BridgeStatus::Active);
+        assert_ne!(BridgeStatus::Active, BridgeStatus::Degraded);
+        assert_ne!(BridgeStatus::Failed, BridgeStatus::Disconnected);
+    }
+
+    #[test]
+    fn test_bridge_status_from_negative_score() {
+        // Negative should be treated as Failed
+        assert_eq!(BridgeStatus::from_health_score(-0.5), BridgeStatus::Failed);
+    }
+
+    #[test]
+    fn test_bridge_error_rate_with_high_request_count() {
+        let bridge = ServiceBridge {
+            bridge_id: "test".into(),
+            source_service: "a".into(),
+            target_service: "b".into(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Active,
+            health_score: 1.0,
+            latency_ms: 10.0,
+            request_count: 1000,
+            error_count: 100,
+            created_at: Utc::now(),
+            last_active: None,
+        };
+        assert!((bridge.error_rate() - 0.1).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_multiple_bridges_different_protocols() {
+        let mgr = BridgeManager::new();
+        let _b1 = mgr.register_bridge("a", "b", WireProtocol::Rest);
+        let _b2 = mgr.register_bridge("c", "d", WireProtocol::Grpc);
+        let _b3 = mgr.register_bridge("e", "f", WireProtocol::WebSocket);
+        let _b4 = mgr.register_bridge("g", "h", WireProtocol::Ipc);
+        assert_eq!(mgr.bridge_count(), 4);
+    }
+
+    #[test]
+    fn test_deregister_then_re_register() {
+        let mgr = BridgeManager::new();
+        let bridge_id = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        assert!(mgr.deregister_bridge(&bridge_id).is_ok());
+        assert_eq!(mgr.bridge_count(), 0);
+        let bridge_id2 = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        assert_eq!(mgr.bridge_count(), 1);
+        assert_ne!(bridge_id, bridge_id2); // New UUID
+    }
+
+    #[test]
+    fn test_get_wire_weight_nonexistent() {
+        let mgr = BridgeManager::new();
+        let w = mgr.get_wire_weight("nonexistent", "other");
+        assert!(w.is_none());
+    }
+
+    #[test]
+    fn test_overall_synergy_with_custom_synergies() {
+        let mgr = BridgeManager::new();
+        // Override all synergies with known values
+        let keys: Vec<(String, String)> = mgr.synergy_scores.read().keys().cloned().collect();
+        for key in &keys {
+            let _r = mgr.update_synergy(&key.0, &key.1, 0.5);
+        }
+        let overall = mgr.overall_synergy();
+        assert!((overall - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_bridge_clone() {
+        let bridge = ServiceBridge {
+            bridge_id: "test".into(),
+            source_service: "a".into(),
+            target_service: "b".into(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Active,
+            health_score: 0.75,
+            latency_ms: 12.5,
+            request_count: 10,
+            error_count: 1,
+            created_at: Utc::now(),
+            last_active: None,
+        };
+        let cloned = bridge.clone();
+        assert_eq!(cloned.bridge_id, "test");
+        assert_eq!(cloned.source_service, "a");
+        assert!((cloned.health_score - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_bridge_status_clone() {
+        let status = BridgeStatus::Degraded;
+        let cloned = status.clone();
+        assert_eq!(cloned, BridgeStatus::Degraded);
+    }
+
+    #[test]
+    fn test_health_recovery_failed_to_active() {
+        let mgr = BridgeManager::new();
+        let bridge_id = mgr.register_bridge("a", "b", WireProtocol::Rest).unwrap_or_default();
+        assert!(mgr.update_health(&bridge_id, 0.1).is_ok()); // Failed
+        assert!(mgr.update_health(&bridge_id, 0.8).is_ok()); // Recovered
+        let bridge = mgr.get_bridge(&bridge_id).unwrap_or_else(|_| ServiceBridge {
+            bridge_id: String::new(),
+            source_service: String::new(),
+            target_service: String::new(),
+            protocol: WireProtocol::Rest,
+            status: BridgeStatus::Disconnected,
+            health_score: 0.0,
+            latency_ms: 0.0,
+            request_count: 0,
+            error_count: 0,
+            created_at: Utc::now(),
+            last_active: None,
+        });
+        assert_eq!(bridge.status, BridgeStatus::Active);
+    }
+
+    #[test]
+    fn test_wire_weights_have_positive_values() {
+        let mgr = BridgeManager::new();
+        for w in mgr.wire_weights() {
+            assert!(w.weight > 0.0, "wire weight for {}->{} should be positive", w.source, w.target);
+        }
+    }
+
+    #[test]
+    fn test_synergy_is_directional() {
+        let mgr = BridgeManager::new();
+        assert!(mgr.update_synergy("x", "y", 0.9).is_ok());
+        assert!(mgr.update_synergy("y", "x", 0.1).is_ok());
+        assert!((mgr.get_synergy("x", "y") - 0.9).abs() < f64::EPSILON);
+        assert!((mgr.get_synergy("y", "x") - 0.1).abs() < f64::EPSILON);
+    }
 }

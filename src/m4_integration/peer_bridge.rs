@@ -1127,4 +1127,125 @@ mod tests {
         assert!(result.is_ok());
         assert!(!result.expect("forward result"));
     }
+
+    // --- Additional tests to reach 50+ ---
+
+    #[test]
+    fn test_tier_interval_secs_unknown_tier() {
+        // Tiers > 3 should default to 60
+        assert_eq!(PeerBridgeManager::tier_interval_secs(6), 60);
+        assert_eq!(PeerBridgeManager::tier_interval_secs(0), 60);
+        assert_eq!(PeerBridgeManager::tier_interval_secs(255), 60);
+    }
+
+    #[test]
+    fn test_peers_by_tier_tier_5_has_entries() {
+        let manager = PeerBridgeManager::new().expect("create manager");
+        let by_tier = manager.peers_by_tier();
+        assert!(by_tier.contains_key(&5));
+        assert!(!by_tier.get(&5).map_or(true, Vec::is_empty));
+    }
+
+    #[test]
+    fn test_default_configs_cover_all_tiers() {
+        let configs = default_peer_configs();
+        let tiers: std::collections::HashSet<u8> = configs.iter().map(|c| c.tier).collect();
+        assert!(tiers.contains(&1));
+        assert!(tiers.contains(&2));
+        assert!(tiers.contains(&3));
+        assert!(tiers.contains(&4));
+        assert!(tiers.contains(&5));
+    }
+
+    #[test]
+    fn test_peer_health_state_initial_counters() {
+        let state = PeerHealthState::new("test");
+        assert_eq!(state.total_successes, 0);
+        assert_eq!(state.total_failures, 0);
+        assert!(state.last_success.is_none());
+        assert!(state.last_poll.is_none());
+        assert!(state.version.is_none());
+    }
+
+    #[test]
+    fn test_synergy_zero_with_no_data() {
+        let state = PeerHealthState::new("test");
+        assert!(state.synergy_score.abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_record_failure_marks_unreachable() {
+        let mut state = PeerHealthState::new("test");
+        state.record_success(10.0, 1.0, None); // first make reachable
+        assert!(state.reachable);
+        state.record_failure();
+        assert!(!state.reachable);
+    }
+
+    #[test]
+    fn test_record_failure_sets_last_poll() {
+        let mut state = PeerHealthState::new("test");
+        state.record_failure();
+        assert!(state.last_poll.is_some());
+    }
+
+    #[test]
+    fn test_record_success_sets_last_success_and_last_poll() {
+        let mut state = PeerHealthState::new("test");
+        state.record_success(10.0, 0.9, None);
+        assert!(state.last_success.is_some());
+        assert!(state.last_poll.is_some());
+    }
+
+    #[test]
+    fn test_circuit_opened_at_set_when_threshold_reached() {
+        let mut state = PeerHealthState::new("test");
+        for _ in 0..CIRCUIT_OPEN_THRESHOLD {
+            state.record_failure();
+        }
+        assert!(state.circuit_opened_at.is_some());
+    }
+
+    #[test]
+    fn test_success_clears_circuit_opened_at() {
+        let mut state = PeerHealthState::new("test");
+        for _ in 0..CIRCUIT_OPEN_THRESHOLD {
+            state.record_failure();
+        }
+        assert!(state.circuit_opened_at.is_some());
+        state.record_success(10.0, 1.0, None);
+        assert!(state.circuit_opened_at.is_none());
+    }
+
+    #[test]
+    fn test_peer_config_all_weights_positive() {
+        let configs = default_peer_configs();
+        for config in &configs {
+            assert!(config.weight > 0.0, "weight for {} should be positive", config.service_id);
+        }
+    }
+
+    #[test]
+    fn test_peer_config_all_ports_nonzero() {
+        let configs = default_peer_configs();
+        for config in &configs {
+            assert!(config.port > 0, "port for {} should be nonzero", config.service_id);
+        }
+    }
+
+    #[test]
+    fn test_mesh_summary_serialization_roundtrip() {
+        let manager = PeerBridgeManager::new().expect("create manager");
+        let summary = manager.mesh_summary();
+        let json = serde_json::to_string(&summary).unwrap_or_default();
+        let parsed: std::result::Result<MeshHealthSummary, _> = serde_json::from_str(&json);
+        assert!(parsed.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_poll_tier_with_no_matching_peers() {
+        let manager = PeerBridgeManager::with_configs(vec![]).expect("create");
+        manager.poll_tier(1).await;
+        // Should complete without error
+    }
 }

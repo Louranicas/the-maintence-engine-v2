@@ -1470,6 +1470,190 @@ mod tests {
     }
 
     #[test]
+    fn test_with_max_concurrent_custom() {
+        let engine = RemediationEngine::with_max_concurrent(3);
+        assert!(engine.is_ok());
+        if let Ok(eng) = engine {
+            assert_eq!(eng.max_concurrent, 3);
+        }
+    }
+
+    #[test]
+    fn test_with_max_concurrent_one() {
+        let engine = RemediationEngine::with_max_concurrent(1);
+        assert!(engine.is_ok());
+        if let Ok(eng) = engine {
+            let _ = submit_default(&eng);
+            let _ = eng.process_next();
+            // Second should be blocked
+            let _ = submit_default(&eng);
+            let r = eng.process_next();
+            assert!(r.is_ok());
+            if let Ok(opt) = r {
+                assert!(opt.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn test_submit_multiple_issue_types() {
+        let engine = RemediationEngine::new();
+
+        let r1 = engine.submit_request("svc", IssueType::LatencySpike, Severity::Low, "slow");
+        assert!(r1.is_ok());
+
+        let r2 = engine.submit_request("svc", IssueType::DiskPressure, Severity::Medium, "disk full");
+        assert!(r2.is_ok());
+
+        let r3 = engine.submit_request("svc", IssueType::Crash, Severity::Critical, "segfault");
+        assert!(r3.is_ok());
+
+        assert_eq!(engine.pending_count(), 3);
+    }
+
+    #[test]
+    fn test_pathway_delta_success_is_positive() {
+        let engine = RemediationEngine::new();
+        let id = submit_default(&engine);
+        let _ = engine.process_next();
+        let outcome = engine.complete_request(&id, true, 100, None);
+        assert!(outcome.is_ok());
+        if let Ok(o) = outcome {
+            assert!(o.pathway_delta > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_pathway_delta_failure_is_negative() {
+        let engine = RemediationEngine::new();
+        let id = submit_default(&engine);
+        let _ = engine.process_next();
+        let outcome = engine.complete_request(&id, false, 500, Some("failed".into()));
+        assert!(outcome.is_ok());
+        if let Ok(o) = outcome {
+            assert!(o.pathway_delta < 0.0);
+            assert!((o.pathway_delta - (-0.1)).abs() < f64::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_pathway_delta_fast_success_larger() {
+        let engine = RemediationEngine::new();
+        // Fast success: delta = 1/(1+100/1000) = 1/1.1 ~ 0.909
+        let id1 = submit_default(&engine);
+        let _ = engine.process_next();
+        let o1 = engine.complete_request(&id1, true, 100, None);
+
+        // Slow success: delta = 1/(1+5000/1000) = 1/6 ~ 0.167
+        let id2 = submit_default(&engine);
+        let _ = engine.process_next();
+        let o2 = engine.complete_request(&id2, true, 5000, None);
+
+        if let (Ok(fast), Ok(slow)) = (o1, o2) {
+            assert!(fast.pathway_delta > slow.pathway_delta);
+        }
+    }
+
+    #[test]
+    fn test_cancel_nonexistent_in_both_queues() {
+        let engine = RemediationEngine::new();
+        let result = engine.cancel_request("totally-fake-id");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_request_confidence_in_valid_range() {
+        let engine = RemediationEngine::new();
+        let req = engine.submit_request(
+            "svc",
+            IssueType::MemoryPressure,
+            Severity::Low,
+            "high mem",
+        );
+        assert!(req.is_ok());
+        if let Ok(r) = req {
+            assert!(r.confidence >= 0.0);
+            assert!(r.confidence <= 1.0);
+        }
+    }
+
+    #[test]
+    fn test_request_has_uuid_id() {
+        let engine = RemediationEngine::new();
+        let req = engine.submit_request("svc", IssueType::Timeout, Severity::Medium, "slow");
+        assert!(req.is_ok());
+        if let Ok(r) = req {
+            assert!(!r.id.is_empty());
+            // UUID v4 format check: should contain hyphens and be 36 chars
+            assert_eq!(r.id.len(), 36);
+            assert!(r.id.contains('-'));
+        }
+    }
+
+    #[test]
+    fn test_request_context_has_description() {
+        let engine = RemediationEngine::new();
+        let req = engine.submit_request(
+            "svc",
+            IssueType::HealthFailure,
+            Severity::High,
+            "my custom description",
+        );
+        assert!(req.is_ok());
+        if let Ok(r) = req {
+            assert_eq!(
+                r.context.get("description").map(String::as_str),
+                Some("my custom description")
+            );
+        }
+    }
+
+    #[test]
+    fn test_process_after_complete_frees_slot() {
+        let engine = RemediationEngine::with_max_concurrent(1).ok();
+        assert!(engine.is_some());
+        if let Some(eng) = engine {
+            let id1 = submit_default(&eng);
+            let _ = eng.process_next();
+            assert_eq!(eng.active_count(), 1);
+
+            // Complete the first
+            let _ = eng.complete_request(&id1, true, 50, None);
+            assert_eq!(eng.active_count(), 0);
+
+            // Now a second should be processable
+            let _ = submit_default(&eng);
+            let r = eng.process_next();
+            assert!(r.is_ok());
+            if let Ok(opt) = r {
+                assert!(opt.is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn test_success_rate_all_successes() {
+        let engine = RemediationEngine::new();
+        for _ in 0..5 {
+            let id = submit_default(&engine);
+            let _ = engine.process_next();
+            let _ = engine.complete_request(&id, true, 100, None);
+        }
+        assert!((engine.success_rate() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_success_rate_all_failures() {
+        let engine = RemediationEngine::new();
+        for _ in 0..5 {
+            let id = submit_default(&engine);
+            let _ = engine.process_next();
+            let _ = engine.complete_request(&id, false, 100, Some("err".into()));
+        }
+        assert!((engine.success_rate() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
     fn test_multiple_requests_full_lifecycle() {
         let engine = RemediationEngine::new();
 

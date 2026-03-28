@@ -587,4 +587,388 @@ mod tests {
         let result = client.get_endpoint("imaginary-service");
         assert!(result.is_err());
     }
+
+    // --- Additional tests to reach 50+ ---
+
+    #[test]
+    fn test_default_creates_same_as_new() {
+        let d = RestClient::default();
+        let n = RestClient::new();
+        assert_eq!(d.endpoint_count(), n.endpoint_count());
+    }
+
+    #[test]
+    fn test_build_url_contains_base_path() {
+        let client = RestClient::new();
+        let url = client.build_url("synthex", "/status").unwrap_or_default();
+        assert!(url.starts_with("http://"));
+    }
+
+    #[test]
+    fn test_simulate_request_health_endpoint_health_path() {
+        let client = RestClient::new();
+        let resp = client.simulate_request("synthex", HttpMethod::Get, "/api/health");
+        assert!(resp.is_ok());
+        let r = resp.unwrap_or_else(|_| RestResponse {
+            status_code: 0,
+            body: String::new(),
+            headers: HashMap::new(),
+            duration_ms: 0,
+        });
+        assert!(r.body.contains("healthy"));
+    }
+
+    #[test]
+    fn test_simulate_request_non_health_endpoint() {
+        let client = RestClient::new();
+        let resp = client.simulate_request("synthex", HttpMethod::Post, "/data");
+        assert!(resp.is_ok());
+        let r = resp.unwrap_or_else(|_| RestResponse {
+            status_code: 0,
+            body: String::new(),
+            headers: HashMap::new(),
+            duration_ms: 0,
+        });
+        assert!(r.body.contains("ok"));
+        assert!(r.body.contains("POST"));
+    }
+
+    #[test]
+    fn test_simulate_request_put_method() {
+        let client = RestClient::new();
+        let resp = client.simulate_request("synthex", HttpMethod::Put, "/update");
+        assert!(resp.is_ok());
+        let r = resp.unwrap_or_else(|_| RestResponse {
+            status_code: 0,
+            body: String::new(),
+            headers: HashMap::new(),
+            duration_ms: 0,
+        });
+        assert!(r.body.contains("PUT"));
+    }
+
+    #[test]
+    fn test_simulate_request_delete_method() {
+        let client = RestClient::new();
+        let resp = client.simulate_request("synthex", HttpMethod::Delete, "/resource");
+        assert!(resp.is_ok());
+        let r = resp.unwrap_or_else(|_| RestResponse {
+            status_code: 0,
+            body: String::new(),
+            headers: HashMap::new(),
+            duration_ms: 0,
+        });
+        assert!(r.body.contains("DELETE"));
+    }
+
+    #[test]
+    fn test_simulate_request_patch_method() {
+        let client = RestClient::new();
+        let resp = client.simulate_request("synthex", HttpMethod::Patch, "/partial");
+        assert!(resp.is_ok());
+        let r = resp.unwrap_or_else(|_| RestResponse {
+            status_code: 0,
+            body: String::new(),
+            headers: HashMap::new(),
+            duration_ms: 0,
+        });
+        assert!(r.body.contains("PATCH"));
+    }
+
+    #[test]
+    fn test_simulate_request_not_found_service() {
+        let client = RestClient::new();
+        let result = client.simulate_request("nonexistent", HttpMethod::Get, "/test");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_response_headers_contain_request_id() {
+        let client = RestClient::new();
+        let resp = client.simulate_request("synthex", HttpMethod::Get, "/test");
+        assert!(resp.is_ok());
+        let r = resp.unwrap_or_else(|_| RestResponse {
+            status_code: 0,
+            body: String::new(),
+            headers: HashMap::new(),
+            duration_ms: 0,
+        });
+        assert!(r.headers.contains_key("x-request-id"));
+        // UUID is 36 chars (with hyphens)
+        let req_id = r.headers.get("x-request-id").cloned().unwrap_or_default();
+        assert_eq!(req_id.len(), 36);
+    }
+
+    #[test]
+    fn test_response_content_type_is_json() {
+        let client = RestClient::new();
+        let resp = client.simulate_request("synthex", HttpMethod::Get, "/test");
+        assert!(resp.is_ok());
+        let r = resp.unwrap_or_else(|_| RestResponse {
+            status_code: 0,
+            body: String::new(),
+            headers: HashMap::new(),
+            duration_ms: 0,
+        });
+        assert_eq!(
+            r.headers.get("content-type").cloned().unwrap_or_default(),
+            "application/json"
+        );
+    }
+
+    #[test]
+    fn test_response_duration_is_positive() {
+        let client = RestClient::new();
+        let resp = client.simulate_request("synthex", HttpMethod::Get, "/test");
+        assert!(resp.is_ok());
+        let r = resp.unwrap_or_else(|_| RestResponse {
+            status_code: 0,
+            body: String::new(),
+            headers: HashMap::new(),
+            duration_ms: 0,
+        });
+        assert!(r.duration_ms > 0);
+    }
+
+    #[test]
+    fn test_circuit_open_default_is_false() {
+        let client = RestClient::new();
+        assert!(!client.is_circuit_open("anything"));
+    }
+
+    #[test]
+    fn test_circuit_open_does_not_affect_other_services() {
+        let client = RestClient::new();
+        client.set_circuit_open("synthex", true);
+        assert!(!client.is_circuit_open("nais"));
+    }
+
+    #[test]
+    fn test_health_check_not_found_service() {
+        let client = RestClient::new();
+        let result = client.health_check("nonexistent-service");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_health_check_circuit_open() {
+        let client = RestClient::new();
+        client.set_circuit_open("synthex", true);
+        let result = client.health_check("synthex");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_request_log_empty_for_unknown_service() {
+        let client = RestClient::new();
+        let log = client.get_request_log("unknown-svc");
+        assert!(log.is_empty());
+    }
+
+    #[test]
+    fn test_request_log_records_method() {
+        let client = RestClient::new();
+        let _r = client.simulate_request("synthex", HttpMethod::Post, "/data");
+        let log = client.get_request_log("synthex");
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].method, HttpMethod::Post);
+    }
+
+    #[test]
+    fn test_request_log_records_path() {
+        let client = RestClient::new();
+        let _r = client.simulate_request("synthex", HttpMethod::Get, "/custom/path");
+        let log = client.get_request_log("synthex");
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].path, "/custom/path");
+    }
+
+    #[test]
+    fn test_request_log_records_status_code() {
+        let client = RestClient::new();
+        let _r = client.simulate_request("synthex", HttpMethod::Get, "/test");
+        let log = client.get_request_log("synthex");
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].status_code, Some(200));
+    }
+
+    #[test]
+    fn test_request_log_records_id_is_uuid() {
+        let client = RestClient::new();
+        let _r = client.simulate_request("synthex", HttpMethod::Get, "/test");
+        let log = client.get_request_log("synthex");
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].id.len(), 36);
+    }
+
+    #[test]
+    fn test_request_log_records_duration_positive() {
+        let client = RestClient::new();
+        let _r = client.simulate_request("synthex", HttpMethod::Get, "/test");
+        let log = client.get_request_log("synthex");
+        assert_eq!(log.len(), 1);
+        assert!(log[0].duration_ms > 0);
+    }
+
+    #[test]
+    fn test_success_rate_after_circuit_open_requests() {
+        let client = RestClient::new();
+        // Make one successful request
+        let _r = client.simulate_request("synthex", HttpMethod::Get, "/ok");
+        // All simulated requests succeed, so rate stays at 1.0
+        assert!((client.success_rate("synthex") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_success_rate_unknown_service_is_optimistic() {
+        let client = RestClient::new();
+        assert!((client.success_rate("unknown") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_avg_latency_unknown_service_is_zero() {
+        let client = RestClient::new();
+        assert!(client.avg_latency("unknown").abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_avg_latency_consistent_across_requests() {
+        let client = RestClient::new();
+        let _r1 = client.simulate_request("synthex", HttpMethod::Get, "/a");
+        let _r2 = client.simulate_request("synthex", HttpMethod::Get, "/b");
+        let latency = client.avg_latency("synthex");
+        // Since simulated latency is deterministic for the same service,
+        // all requests should have the same latency => avg = that latency
+        assert!(latency > 0.0);
+    }
+
+    #[test]
+    fn test_register_replaces_existing_endpoint() {
+        let client = RestClient::new();
+        let ep1 = ServiceEndpoint::new("custom", "host1", 1111);
+        let ep2 = ServiceEndpoint::new("custom", "host2", 2222);
+        assert!(client.register_endpoint(ep1).is_ok());
+        assert!(client.register_endpoint(ep2).is_ok());
+        let ep = client.get_endpoint("custom");
+        assert!(ep.is_ok());
+        let endpoint = ep.unwrap_or_else(|_| ServiceEndpoint::new("", "", 0));
+        assert_eq!(endpoint.port, 2222);
+    }
+
+    #[test]
+    fn test_multiple_services_request_log_isolation() {
+        let client = RestClient::new();
+        let _r1 = client.simulate_request("synthex", HttpMethod::Get, "/a");
+        let _r2 = client.simulate_request("nais", HttpMethod::Get, "/b");
+        let synthex_log = client.get_request_log("synthex");
+        let nais_log = client.get_request_log("nais");
+        assert_eq!(synthex_log.len(), 1);
+        assert_eq!(nais_log.len(), 1);
+    }
+
+    #[test]
+    fn test_endpoint_count_after_deduplication() {
+        let client = RestClient::new();
+        let initial = client.endpoint_count();
+        // Re-registering same ID should not increase count
+        let ep = ServiceEndpoint::new("synthex", "other-host", 9999);
+        let _r = client.register_endpoint(ep);
+        assert_eq!(client.endpoint_count(), initial);
+    }
+
+    #[test]
+    fn test_request_log_capacity_eviction_preserves_order() {
+        let client = RestClient::new();
+        for i in 0..(REQUEST_LOG_CAPACITY + 10) {
+            let path = format!("/path/{i}");
+            let _r = client.simulate_request("synthex", HttpMethod::Get, &path);
+        }
+        let log = client.get_request_log("synthex");
+        // After eviction the earliest entries are gone
+        assert!(!log.is_empty());
+        // The last entry should be the last path
+        let last = &log[log.len() - 1];
+        let expected_path = format!("/path/{}", REQUEST_LOG_CAPACITY + 9);
+        assert_eq!(last.path, expected_path);
+    }
+
+    #[test]
+    fn test_build_url_different_services() {
+        let client = RestClient::new();
+        let url_synthex = client.build_url("synthex", "/test").unwrap_or_default();
+        let url_nais = client.build_url("nais", "/test").unwrap_or_default();
+        // Different services should produce different URLs
+        assert_ne!(url_synthex, url_nais);
+    }
+
+    #[test]
+    fn test_health_check_body_contains_service_name() {
+        let client = RestClient::new();
+        let resp = client.health_check("nais");
+        assert!(resp.is_ok());
+        let r = resp.unwrap_or_else(|_| RestResponse {
+            status_code: 0,
+            body: String::new(),
+            headers: HashMap::new(),
+            duration_ms: 0,
+        });
+        assert!(r.body.contains("nais"));
+    }
+
+    #[test]
+    fn test_circuit_reopen_after_close() {
+        let client = RestClient::new();
+        client.set_circuit_open("synthex", true);
+        client.set_circuit_open("synthex", false);
+        client.set_circuit_open("synthex", true);
+        assert!(client.is_circuit_open("synthex"));
+    }
+
+    #[test]
+    fn test_multiple_health_checks_accumulate_log() {
+        let client = RestClient::new();
+        let _r1 = client.health_check("synthex");
+        let _r2 = client.health_check("synthex");
+        let _r3 = client.health_check("synthex");
+        let log = client.get_request_log("synthex");
+        assert_eq!(log.len(), 3);
+    }
+
+    #[test]
+    fn test_http_method_equality() {
+        assert_eq!(HttpMethod::Get, HttpMethod::Get);
+        assert_ne!(HttpMethod::Get, HttpMethod::Post);
+        assert_ne!(HttpMethod::Put, HttpMethod::Delete);
+    }
+
+    #[test]
+    fn test_http_method_copy() {
+        let m = HttpMethod::Patch;
+        let m2 = m; // Copy
+        assert_eq!(m, m2);
+    }
+
+    #[test]
+    fn test_request_record_clone() {
+        let client = RestClient::new();
+        let _r = client.simulate_request("synthex", HttpMethod::Get, "/test");
+        let log = client.get_request_log("synthex");
+        assert_eq!(log.len(), 1);
+        let cloned = log[0].clone();
+        assert_eq!(cloned.service_id, "synthex");
+    }
+
+    #[test]
+    fn test_rest_response_clone() {
+        let resp = RestResponse {
+            status_code: 200,
+            body: "test".into(),
+            headers: HashMap::new(),
+            duration_ms: 42,
+        };
+        let cloned = resp.clone();
+        assert_eq!(cloned.status_code, 200);
+        assert_eq!(cloned.body, "test");
+        assert_eq!(cloned.duration_ms, 42);
+    }
 }

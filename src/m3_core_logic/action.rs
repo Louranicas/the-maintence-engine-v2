@@ -1457,4 +1457,573 @@ mod tests {
         assert_eq!(executor.get_active_count(), 0);
         assert!(executor.can_accept_more());
     }
+
+    // -----------------------------------------------------------------------
+    // 19. test_dispatch_l3_needs_approval
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_dispatch_l3_needs_approval() {
+        let executor = ActionExecutor::new();
+        let request = make_request(
+            EscalationTier::L3PbftConsensus,
+            RemediationAction::DatabaseVacuum {
+                database: "test.db".into(),
+            },
+            "db-svc",
+        );
+        let result = executor.dispatch(&request);
+        assert!(result.is_ok());
+        if let Ok(e) = result {
+            assert_eq!(e.status, ActionStatus::Pending);
+            assert_eq!(e.tier, EscalationTier::L3PbftConsensus);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 20. test_execute_pending_fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_execute_pending_fails() {
+        let executor = ActionExecutor::new();
+        let request = make_request(
+            EscalationTier::L2RequireApproval,
+            RemediationAction::CacheCleanup {
+                service_id: "svc".into(),
+                threshold_percent: 50,
+            },
+            "svc",
+        );
+        let dispatched = executor.dispatch(&request);
+        assert!(dispatched.is_ok());
+        if let Ok(e) = dispatched {
+            // Trying to execute a Pending action should fail
+            let result = executor.execute(&e.execution_id);
+            assert!(result.is_err());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 21. test_reject_non_pending_fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_reject_non_pending_fails() {
+        let executor = ActionExecutor::new();
+        let request = make_l0_request("svc");
+        let dispatched = executor.dispatch(&request);
+        assert!(dispatched.is_ok());
+        if let Ok(e) = dispatched {
+            // L0 dispatches as Approved, reject should fail
+            let result = executor.reject(&e.execution_id, "test");
+            assert!(result.is_err());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 22. test_approve_nonexistent_fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_approve_nonexistent_fails() {
+        let executor = ActionExecutor::new();
+        let result = executor.approve("nonexistent-id");
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 23. test_reject_nonexistent_fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_reject_nonexistent_fails() {
+        let executor = ActionExecutor::new();
+        let result = executor.reject("nonexistent-id", "reason");
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 24. test_complete_nonexistent_fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_complete_nonexistent_fails() {
+        let executor = ActionExecutor::new();
+        let result = executor.complete("nonexistent-id", true, "ok");
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 25. test_fail_nonexistent_fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_fail_nonexistent_fails() {
+        let executor = ActionExecutor::new();
+        let result = executor.fail("nonexistent-id", "error");
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 26. test_save_checkpoint_nonexistent_fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_save_checkpoint_nonexistent_fails() {
+        let executor = ActionExecutor::new();
+        let result = executor.save_checkpoint("nonexistent", "data");
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 27. test_rollback_nonexistent_fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_rollback_nonexistent_fails() {
+        let executor = ActionExecutor::new();
+        let result = executor.rollback("nonexistent-rollback-id");
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 28. test_get_execution_nonexistent_fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_get_execution_nonexistent_fails() {
+        let executor = ActionExecutor::new();
+        let result = executor.get_execution("nonexistent");
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 29. test_with_max_concurrent_zero_becomes_one
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_with_max_concurrent_zero_becomes_one() {
+        let executor = ActionExecutor::with_max_concurrent(0);
+        assert!(executor.can_accept_more());
+
+        let r = make_l0_request("svc");
+        assert!(executor.dispatch(&r).is_ok());
+        assert!(!executor.can_accept_more());
+    }
+
+    // -----------------------------------------------------------------------
+    // 30. test_action_result_success_helper
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_action_result_success_helper() {
+        let result = ActionResult::success("all good");
+        assert!(result.success);
+        assert_eq!(result.message, "all good");
+        assert!(result.metrics_affected.is_empty());
+        assert!(result.side_effects.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // 31. test_action_result_failure_helper
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_action_result_failure_helper() {
+        let result = ActionResult::failure("connection refused");
+        assert!(!result.success);
+        assert_eq!(result.message, "connection refused");
+        assert!(result.metrics_affected.is_empty());
+        assert!(result.side_effects.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // 32. test_dispatch_populates_fields
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_dispatch_populates_fields() {
+        let executor = ActionExecutor::new();
+        let request = make_l0_request("synthex");
+        let result = executor.dispatch(&request);
+        assert!(result.is_ok());
+        if let Ok(e) = result {
+            assert_eq!(e.request_id, request.id);
+            assert_eq!(e.service_id, "synthex");
+            assert!(e.completed_at.is_none());
+            assert!(e.duration_ms.is_none());
+            assert!(e.result.is_none());
+            assert!(e.rollback_id.is_none());
+            assert!(!e.execution_id.is_empty());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 33. test_execute_all_action_types
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_execute_all_action_types() {
+        let actions: Vec<RemediationAction> = vec![
+            RemediationAction::RetryWithBackoff {
+                max_retries: 3,
+                initial_delay_ms: 100,
+            },
+            RemediationAction::CircuitBreakerReset {
+                service_id: "svc".into(),
+            },
+            RemediationAction::ServiceRestart {
+                service_id: "svc".into(),
+                graceful: true,
+            },
+            RemediationAction::GracefulDegradation {
+                service_id: "svc".into(),
+                level: 2,
+            },
+            RemediationAction::FallbackToCached {
+                key: "k".into(),
+                ttl_seconds: 60,
+            },
+            RemediationAction::CacheCleanup {
+                service_id: "svc".into(),
+                threshold_percent: 50,
+            },
+            RemediationAction::SessionRotation {
+                session_id: "s1".into(),
+            },
+            RemediationAction::DatabaseVacuum {
+                database: "db".into(),
+            },
+            RemediationAction::AlertHuman {
+                message: "help".into(),
+                severity: "High".into(),
+            },
+        ];
+
+        for action in actions {
+            let executor = ActionExecutor::new();
+            let request = make_request(EscalationTier::L0AutoExecute, action, "svc");
+            let dispatched = executor.dispatch(&request);
+            assert!(dispatched.is_ok());
+            if let Ok(e) = dispatched {
+                let result = executor.execute(&e.execution_id);
+                assert!(result.is_ok());
+                if let Ok(completed) = result {
+                    assert_eq!(completed.status, ActionStatus::Completed);
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 34. test_complete_not_executing_fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_complete_not_executing_fails() {
+        let executor = ActionExecutor::new();
+        let request = make_l0_request("svc");
+        let dispatched = executor.dispatch(&request);
+        assert!(dispatched.is_ok());
+        if let Ok(e) = dispatched {
+            // Approved but not Executing -> complete should fail
+            let result = executor.complete(&e.execution_id, true, "ok");
+            assert!(result.is_err());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 35. test_fail_not_executing_fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_fail_not_executing_fails() {
+        let executor = ActionExecutor::new();
+        let request = make_l0_request("svc");
+        let dispatched = executor.dispatch(&request);
+        assert!(dispatched.is_ok());
+        if let Ok(e) = dispatched {
+            let result = executor.fail(&e.execution_id, "err");
+            assert!(result.is_err());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 36. test_rejected_goes_to_completed_count
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_rejected_goes_to_completed_count() {
+        let executor = ActionExecutor::new();
+        let request = make_request(
+            EscalationTier::L2RequireApproval,
+            RemediationAction::CacheCleanup {
+                service_id: "svc".into(),
+                threshold_percent: 50,
+            },
+            "svc",
+        );
+        let dispatched = executor.dispatch(&request);
+        assert!(dispatched.is_ok());
+        if let Ok(e) = dispatched {
+            let _ = executor.reject(&e.execution_id, "no quorum");
+            assert_eq!(executor.get_completed_count(), 1);
+            assert_eq!(executor.get_active_count(), 0);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 37. test_success_rate_with_mix
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_success_rate_with_mix() {
+        let executor = ActionExecutor::new();
+
+        // 2 successes
+        for _ in 0..2 {
+            let r = make_l0_request("svc");
+            let d = executor.dispatch(&r);
+            if let Ok(e) = d {
+                let _ = executor.execute(&e.execution_id);
+            }
+        }
+
+        // 2 rejections (count as non-success)
+        for _ in 0..2 {
+            let r = make_request(
+                EscalationTier::L2RequireApproval,
+                RemediationAction::CacheCleanup {
+                    service_id: "svc".into(),
+                    threshold_percent: 50,
+                },
+                "svc",
+            );
+            let d = executor.dispatch(&r);
+            if let Ok(e) = d {
+                let _ = executor.reject(&e.execution_id, "test");
+            }
+        }
+
+        // 2 completed / 4 total = 0.5
+        assert!((executor.get_success_rate() - 0.5).abs() < f64::EPSILON);
+    }
+
+    // -----------------------------------------------------------------------
+    // 38. test_get_executions_for_nonexistent_service
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_get_executions_for_nonexistent_service() {
+        let executor = ActionExecutor::new();
+        let result = executor.get_executions_for_service("doesnt-exist");
+        assert!(result.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // 39. test_clear_completed_empty
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_clear_completed_empty() {
+        let executor = ActionExecutor::new();
+        let cleared = executor.clear_completed();
+        assert_eq!(cleared, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // 40. test_execution_id_is_unique
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_execution_id_is_unique() {
+        let executor = ActionExecutor::new();
+        let r1 = make_l0_request("svc");
+        let r2 = make_l0_request("svc");
+
+        let d1 = executor.dispatch(&r1);
+        let d2 = executor.dispatch(&r2);
+
+        if let (Ok(e1), Ok(e2)) = (d1, d2) {
+            assert_ne!(e1.execution_id, e2.execution_id);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 41. test_approve_then_execute_full_lifecycle
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_approve_then_execute_full_lifecycle() {
+        let executor = ActionExecutor::new();
+        let request = make_request(
+            EscalationTier::L2RequireApproval,
+            RemediationAction::RetryWithBackoff {
+                max_retries: 5,
+                initial_delay_ms: 200,
+            },
+            "gateway",
+        );
+
+        let dispatched = executor.dispatch(&request);
+        assert!(dispatched.is_ok());
+        if let Ok(e) = dispatched {
+            assert_eq!(e.status, ActionStatus::Pending);
+            assert_eq!(executor.get_active_count(), 1);
+
+            let approved = executor.approve(&e.execution_id);
+            assert!(approved.is_ok());
+
+            let executed = executor.execute(&e.execution_id);
+            assert!(executed.is_ok());
+            if let Ok(done) = executed {
+                assert_eq!(done.status, ActionStatus::Completed);
+                assert!(done.result.is_some());
+            }
+            assert_eq!(executor.get_active_count(), 0);
+            assert_eq!(executor.get_completed_count(), 1);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 42. test_rollback_sets_rolling_back_status
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_rollback_sets_rolling_back_status() {
+        let executor = ActionExecutor::new();
+        let request = make_l0_request("svc");
+        let dispatched = executor.dispatch(&request);
+        assert!(dispatched.is_ok());
+        if let Ok(e) = dispatched {
+            let rb_id = executor.save_checkpoint(&e.execution_id, "state-data");
+            assert!(rb_id.is_ok());
+            if let Ok(rid) = rb_id {
+                let _ = executor.rollback(&rid);
+                let execution = executor.get_execution(&e.execution_id);
+                assert!(execution.is_ok());
+                if let Ok(ex) = execution {
+                    assert_eq!(ex.status, ActionStatus::RollingBack);
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 43. test_complete_rolling_back_succeeds
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_complete_rolling_back_succeeds() {
+        let executor = ActionExecutor::new();
+        let request = make_l0_request("svc");
+        let dispatched = executor.dispatch(&request);
+        assert!(dispatched.is_ok());
+        if let Ok(e) = dispatched {
+            let rb_id = executor.save_checkpoint(&e.execution_id, "data");
+            if let Ok(rid) = rb_id {
+                let _ = executor.rollback(&rid);
+                // Now in RollingBack status, complete should work
+                let result = executor.complete(&e.execution_id, true, "rollback done");
+                assert!(result.is_ok());
+                if let Ok(completed) = result {
+                    assert_eq!(completed.status, ActionStatus::Completed);
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 44. test_dispatched_has_correct_action
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_dispatched_has_correct_action() {
+        let executor = ActionExecutor::new();
+        let action = RemediationAction::SessionRotation {
+            session_id: "sess-99".into(),
+        };
+        let request = make_request(EscalationTier::L0AutoExecute, action.clone(), "auth");
+        let dispatched = executor.dispatch(&request);
+        assert!(dispatched.is_ok());
+        if let Ok(e) = dispatched {
+            assert!(matches!(
+                e.action,
+                RemediationAction::SessionRotation { .. }
+            ));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 45. test_simulated_result_has_metrics
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_simulated_result_has_metrics() {
+        // Test the build_simulated_result function directly since execute()
+        // passes through complete() which builds a fresh ActionResult.
+        let result = build_simulated_result(&RemediationAction::ServiceRestart {
+            service_id: "svc".into(),
+            graceful: false,
+        });
+        assert!(result.success);
+        assert!(!result.metrics_affected.is_empty());
+        assert!(!result.side_effects.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // 46. test_graceful_restart_has_side_effects
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_graceful_restart_has_side_effects() {
+        let result = build_simulated_result(&RemediationAction::ServiceRestart {
+            service_id: "svc".into(),
+            graceful: true,
+        });
+        assert!(result.success);
+        assert!(!result.side_effects.is_empty());
+        // Graceful should not mention dropped requests
+        let has_dropped = result
+            .side_effects
+            .iter()
+            .any(|s| s.contains("dropped"));
+        assert!(!has_dropped);
+    }
+
+    // -----------------------------------------------------------------------
+    // 47. test_forced_restart_mentions_dropped
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_forced_restart_mentions_dropped() {
+        let result = build_simulated_result(&RemediationAction::ServiceRestart {
+            service_id: "svc".into(),
+            graceful: false,
+        });
+        assert!(result.success);
+        let has_dropped = result
+            .side_effects
+            .iter()
+            .any(|s| s.contains("dropped"));
+        assert!(has_dropped);
+    }
+
+    // -----------------------------------------------------------------------
+    // 48. test_cache_cleanup_result
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_cache_cleanup_result() {
+        let result = build_simulated_result(&RemediationAction::CacheCleanup {
+            service_id: "svc".into(),
+            threshold_percent: 75,
+        });
+        assert!(result.success);
+        assert!(result.message.contains("75"));
+        assert!(result.metrics_affected.contains(&"memory_usage".to_owned()));
+    }
+
+    // -----------------------------------------------------------------------
+    // 49. test_alert_human_result
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_alert_human_result() {
+        let result = build_simulated_result(&RemediationAction::AlertHuman {
+            message: "disk full".into(),
+            severity: "Critical".into(),
+        });
+        assert!(result.success);
+        assert!(result.message.contains("disk full"));
+        assert!(result.message.contains("Critical"));
+    }
+
+    // -----------------------------------------------------------------------
+    // 50. test_compute_duration_ms_function
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_compute_duration_ms_function() {
+        let start = Utc::now();
+        // None completed -> None duration
+        let result = compute_duration_ms(start, None);
+        assert!(result.is_none());
+
+        // Same timestamp -> 0ms
+        let result = compute_duration_ms(start, Some(start));
+        assert!(result.is_some());
+        if let Some(d) = result {
+            assert_eq!(d, 0);
+        }
+    }
 }

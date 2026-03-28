@@ -1425,4 +1425,440 @@ mod tests {
         let result = mgr.enable_pipeline("PL-HEALTH-001");
         assert!(result.is_err());
     }
+
+    // ------------------------------------------------------------------
+    // 26. test_register_disabled_pipeline
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_register_disabled_pipeline() {
+        let mgr = make_manager();
+        let mut pipeline = custom_pipeline("PL-DISABLED-001", "Disabled Pipeline");
+        pipeline.enabled = false;
+
+        let result = mgr.register_pipeline(pipeline);
+        assert!(result.is_ok());
+
+        let entry = mgr.get_pipeline("PL-DISABLED-001");
+        assert!(entry.is_ok());
+        if let Ok(e) = entry {
+            assert_eq!(e.status, PipelineStatus::Disabled);
+            assert!(!e.pipeline.enabled);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 27. test_pipeline_entry_initial_state
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pipeline_entry_initial_state() {
+        let mgr = make_manager();
+        let entry = mgr.get_pipeline("PL-HEALTH-001");
+        assert!(entry.is_ok());
+        if let Ok(e) = entry {
+            assert_eq!(e.executions, 0);
+            assert_eq!(e.total_latency_ms, 0);
+            assert_eq!(e.slo_violations, 0);
+            assert!(e.last_execution.is_none());
+            assert_eq!(e.error_count, 0);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 28. test_start_execution_nonexistent_pipeline_fails
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_start_execution_nonexistent_pipeline_fails() {
+        let mgr = make_manager();
+        let result = mgr.start_execution("PL-DOES-NOT-EXIST");
+        assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 29. test_multiple_sequential_executions
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_multiple_sequential_executions() {
+        let mgr = make_manager();
+
+        for _ in 0..5 {
+            let exec = mgr.start_execution("PL-HEALTH-001");
+            assert!(exec.is_ok());
+            if let Ok(e) = exec {
+                let _ = mgr.complete_execution(&e.execution_id, vec![PipelineStage::Source]);
+            }
+        }
+
+        let entry = mgr.get_pipeline("PL-HEALTH-001");
+        assert!(entry.is_ok());
+        if let Ok(e) = entry {
+            assert_eq!(e.executions, 5);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 30. test_get_pipeline_stats_no_executions
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_get_pipeline_stats_no_executions() {
+        let mgr = make_manager();
+        let stats = mgr.get_pipeline_stats("PL-HEALTH-001");
+        assert!(stats.is_ok());
+        if let Ok(s) = stats {
+            assert_eq!(s.total_executions, 0);
+            assert_eq!(s.successful_executions, 0);
+            assert_eq!(s.failed_executions, 0);
+            assert!((s.avg_latency_ms - 0.0).abs() < f64::EPSILON);
+            assert!((s.slo_compliance_rate - 1.0).abs() < f64::EPSILON);
+            assert!((s.error_rate - 0.0).abs() < f64::EPSILON);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 31. test_get_pipeline_stats_nonexistent_fails
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_get_pipeline_stats_nonexistent_fails() {
+        let mgr = make_manager();
+        let result = mgr.get_pipeline_stats("PL-NONEXISTENT");
+        assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 32. test_pause_nonexistent_pipeline_fails
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pause_nonexistent_pipeline_fails() {
+        let mgr = make_manager();
+        let result = mgr.pause_pipeline("PL-NONEXISTENT");
+        assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 33. test_resume_nonexistent_pipeline_fails
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_resume_nonexistent_pipeline_fails() {
+        let mgr = make_manager();
+        let result = mgr.resume_pipeline("PL-NONEXISTENT");
+        assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 34. test_disable_nonexistent_pipeline_fails
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_disable_nonexistent_pipeline_fails() {
+        let mgr = make_manager();
+        let result = mgr.disable_pipeline("PL-NONEXISTENT");
+        assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 35. test_enable_nonexistent_pipeline_fails
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_enable_nonexistent_pipeline_fails() {
+        let mgr = make_manager();
+        let result = mgr.enable_pipeline("PL-NONEXISTENT");
+        assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 36. test_pause_already_paused_fails
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pause_already_paused_fails() {
+        let mgr = make_manager();
+        let _ = mgr.pause_pipeline("PL-HEALTH-001");
+        let result = mgr.pause_pipeline("PL-HEALTH-001");
+        assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 37. test_pause_disabled_fails
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pause_disabled_fails() {
+        let mgr = make_manager();
+        let _ = mgr.disable_pipeline("PL-HEALTH-001");
+        let result = mgr.pause_pipeline("PL-HEALTH-001");
+        assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 38. test_execution_has_unique_ids
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_execution_has_unique_ids() {
+        let mgr = make_manager();
+        let exec1 = mgr.start_execution("PL-HEALTH-001");
+        let exec2 = mgr.start_execution("PL-HEALTH-001");
+
+        assert!(exec1.is_ok());
+        assert!(exec2.is_ok());
+
+        if let (Ok(e1), Ok(e2)) = (exec1, exec2) {
+            assert_ne!(e1.execution_id, e2.execution_id);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 39. test_pipeline_status_after_fail_then_start
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pipeline_status_after_fail_then_start() {
+        let mgr = make_manager();
+
+        let exec = mgr.start_execution("PL-HEALTH-001");
+        assert!(exec.is_ok());
+        if let Ok(e) = exec {
+            let _ = mgr.fail_execution(&e.execution_id, "test error".to_owned());
+        }
+
+        // Pipeline should be in Failed state
+        let entry = mgr.get_pipeline("PL-HEALTH-001");
+        assert!(entry.is_ok());
+        if let Ok(e) = entry {
+            assert_eq!(e.status, PipelineStatus::Failed);
+        }
+
+        // Starting a new execution on a failed pipeline should succeed
+        let exec2 = mgr.start_execution("PL-HEALTH-001");
+        assert!(exec2.is_ok());
+    }
+
+    // ------------------------------------------------------------------
+    // 40. test_complete_execution_returns_stages
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_complete_execution_returns_stages() {
+        let mgr = make_manager();
+
+        let exec = mgr.start_execution("PL-HEALTH-001");
+        assert!(exec.is_ok());
+        if let Ok(e) = exec {
+            let stages = vec![
+                PipelineStage::Source,
+                PipelineStage::Ingress,
+                PipelineStage::Transform,
+                PipelineStage::Route,
+                PipelineStage::Sink,
+                PipelineStage::Feedback,
+            ];
+            let result = mgr.complete_execution(&e.execution_id, stages.clone());
+            assert!(result.is_ok());
+            if let Ok(completed) = result {
+                assert_eq!(completed.stages_completed.len(), 6);
+                assert_eq!(completed.stages_completed[0], PipelineStage::Source);
+                assert_eq!(completed.stages_completed[5], PipelineStage::Feedback);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 41. test_fail_execution_records_error_message
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_fail_execution_records_error_message() {
+        let mgr = make_manager();
+        let exec = mgr.start_execution("PL-HEALTH-001");
+        assert!(exec.is_ok());
+        if let Ok(e) = exec {
+            let result = mgr.fail_execution(&e.execution_id, "database timeout".to_owned());
+            assert!(result.is_ok());
+            if let Ok(failed) = result {
+                assert_eq!(failed.error.as_deref(), Some("database timeout"));
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 42. test_get_enabled_pipelines_after_disable_and_enable
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_get_enabled_pipelines_after_disable_and_enable() {
+        let mgr = make_manager();
+
+        // Start: 8 enabled
+        assert_eq!(mgr.get_enabled_pipelines().len(), 8);
+
+        // Disable 2
+        let _ = mgr.disable_pipeline("PL-HEALTH-001");
+        let _ = mgr.disable_pipeline("PL-LOG-001");
+        assert_eq!(mgr.get_enabled_pipelines().len(), 6);
+
+        // Re-enable 1
+        let _ = mgr.enable_pipeline("PL-HEALTH-001");
+        assert_eq!(mgr.get_enabled_pipelines().len(), 7);
+    }
+
+    // ------------------------------------------------------------------
+    // 43. test_slo_compliance_nonexistent_pipeline_fails
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_slo_compliance_nonexistent_pipeline_fails() {
+        let mgr = make_manager();
+        let result = mgr.check_slo_compliance("PL-DOES-NOT-EXIST");
+        assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 44. test_register_then_remove_then_register
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_register_then_remove_then_register() {
+        let mgr = make_manager();
+        let pipeline = custom_pipeline("PL-TEMP-001", "Temporary Pipeline");
+
+        assert!(mgr.register_pipeline(pipeline.clone()).is_ok());
+        assert_eq!(mgr.pipeline_count(), 9);
+
+        assert!(mgr.remove_pipeline("PL-TEMP-001").is_ok());
+        assert_eq!(mgr.pipeline_count(), 8);
+
+        // Re-register with same ID should work
+        assert!(mgr.register_pipeline(pipeline).is_ok());
+        assert_eq!(mgr.pipeline_count(), 9);
+    }
+
+    // ------------------------------------------------------------------
+    // 45. test_execution_started_at_populated
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_execution_started_at_populated() {
+        let mgr = make_manager();
+        let before = Utc::now();
+        let exec = mgr.start_execution("PL-HEALTH-001");
+        let after = Utc::now();
+
+        assert!(exec.is_ok());
+        if let Ok(e) = exec {
+            assert!(e.started_at >= before);
+            assert!(e.started_at <= after);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 46. test_pipeline_count_after_multiple_operations
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pipeline_count_after_multiple_operations() {
+        let mgr = make_manager();
+        assert_eq!(mgr.pipeline_count(), 8);
+
+        // Add 3
+        for i in 0..3 {
+            let p = custom_pipeline(&format!("PL-EXTRA-{i}"), &format!("Extra {i}"));
+            assert!(mgr.register_pipeline(p).is_ok());
+        }
+        assert_eq!(mgr.pipeline_count(), 11);
+
+        // Remove 2
+        assert!(mgr.remove_pipeline("PL-EXTRA-0").is_ok());
+        assert!(mgr.remove_pipeline("PL-EXTRA-1").is_ok());
+        assert_eq!(mgr.pipeline_count(), 9);
+    }
+
+    // ------------------------------------------------------------------
+    // 47. test_complete_empty_stages
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_complete_empty_stages() {
+        let mgr = make_manager();
+        let exec = mgr.start_execution("PL-HEALTH-001");
+        assert!(exec.is_ok());
+        if let Ok(e) = exec {
+            let result = mgr.complete_execution(&e.execution_id, vec![]);
+            assert!(result.is_ok());
+            if let Ok(completed) = result {
+                assert!(completed.stages_completed.is_empty());
+                assert_eq!(completed.status, ExecutionStatus::Completed);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 48. test_active_executions_multiple_pipelines
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_active_executions_multiple_pipelines() {
+        let mgr = make_manager();
+
+        let _ = mgr.start_execution("PL-HEALTH-001");
+        let _ = mgr.start_execution("PL-LOG-001");
+        let _ = mgr.start_execution("PL-TENSOR-001");
+
+        let active = mgr.get_active_executions();
+        assert_eq!(active.len(), 3);
+    }
+
+    // ------------------------------------------------------------------
+    // 49. test_execution_increments_counter
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_execution_increments_counter() {
+        let mgr = make_manager();
+
+        for i in 1..=3 {
+            let exec = mgr.start_execution("PL-HEALTH-001");
+            assert!(exec.is_ok());
+            let entry = mgr.get_pipeline("PL-HEALTH-001");
+            if let Ok(e) = entry {
+                assert_eq!(e.executions, i);
+            }
+            if let Ok(e) = exec {
+                let _ = mgr.complete_execution(&e.execution_id, vec![]);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 50. test_last_execution_updated
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_last_execution_updated() {
+        let mgr = make_manager();
+
+        // Before: no last_execution
+        let entry = mgr.get_pipeline("PL-HEALTH-001");
+        assert!(entry.is_ok());
+        if let Ok(e) = entry {
+            assert!(e.last_execution.is_none());
+        }
+
+        // After start: has last_execution
+        let exec = mgr.start_execution("PL-HEALTH-001");
+        assert!(exec.is_ok());
+        let entry = mgr.get_pipeline("PL-HEALTH-001");
+        assert!(entry.is_ok());
+        if let Ok(e) = entry {
+            assert!(e.last_execution.is_some());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 51. test_custom_pipeline_properties
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_custom_pipeline_properties() {
+        let mgr = make_manager();
+        let p = Pipeline {
+            id: "PL-CUSTOM-999".into(),
+            name: "Custom High Throughput".into(),
+            priority: 1,
+            latency_slo_ms: 50,
+            throughput_target: 100_000,
+            error_budget: 0.001,
+            enabled: true,
+        };
+
+        assert!(mgr.register_pipeline(p).is_ok());
+        let entry = mgr.get_pipeline("PL-CUSTOM-999");
+        assert!(entry.is_ok());
+        if let Ok(e) = entry {
+            assert_eq!(e.pipeline.priority, 1);
+            assert_eq!(e.pipeline.latency_slo_ms, 50);
+            assert_eq!(e.pipeline.throughput_target, 100_000);
+        }
+    }
 }

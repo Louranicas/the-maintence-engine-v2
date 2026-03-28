@@ -947,4 +947,157 @@ mod tests {
         );
         assert!(result.is_ok());
     }
+
+    // --- Additional tests to reach 50+ ---
+
+    #[test]
+    fn test_default_creates_same_as_new() {
+        let d = IpcManager::default();
+        let n = IpcManager::new();
+        assert_eq!(d.socket_count(), n.socket_count());
+    }
+
+    #[test]
+    fn test_register_returns_socket_path() {
+        let mgr = IpcManager::with_socket_dir("/tmp/test");
+        let path = mgr.register("my-svc");
+        assert!(path.is_ok());
+        assert_eq!(path.unwrap_or_default(), "/tmp/test/my-svc.sock");
+    }
+
+    #[test]
+    fn test_register_duplicate_replaces() {
+        let mgr = IpcManager::new();
+        assert!(mgr.register("svc-a").is_ok());
+        assert!(mgr.register("svc-a").is_ok()); // replaces
+        assert_eq!(mgr.socket_count(), 1);
+    }
+
+    #[test]
+    fn test_message_type_display_all_variants() {
+        assert_eq!(IpcMessageType::Response.to_string(), "RESPONSE");
+        assert_eq!(IpcMessageType::Notification.to_string(), "NOTIFICATION");
+        assert_eq!(IpcMessageType::Shutdown.to_string(), "SHUTDOWN");
+    }
+
+    #[test]
+    fn test_socket_health_score_listening() {
+        let mgr = setup_manager(); // Listening state
+        let socket = mgr.get_socket("san-k7");
+        let score = socket.map(|s| s.health_score()).unwrap_or(-1.0);
+        // Listening with no messages => 1.0
+        assert!((score - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_socket_health_score_unbound() {
+        let socket = IpcSocket {
+            service_id: "t".into(),
+            socket_path: "/t".into(),
+            state: SocketState::Unbound,
+            timeout_ms: 1000,
+            messages_sent: 0,
+            messages_received: 0,
+            bytes_sent: 0,
+            bytes_received: 0,
+            error_count: 0,
+            cumulative_latency_us: 0,
+            registered_at: Utc::now(),
+            last_activity: None,
+        };
+        assert!(socket.health_score().abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_socket_health_score_error_state() {
+        let socket = IpcSocket {
+            service_id: "t".into(),
+            socket_path: "/t".into(),
+            state: SocketState::Error,
+            timeout_ms: 1000,
+            messages_sent: 10,
+            messages_received: 10,
+            bytes_sent: 100,
+            bytes_received: 100,
+            error_count: 0,
+            cumulative_latency_us: 0,
+            registered_at: Utc::now(),
+            last_activity: None,
+        };
+        assert!(socket.health_score().abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_socket_average_latency_no_messages() {
+        let socket = IpcSocket {
+            service_id: "t".into(),
+            socket_path: "/t".into(),
+            state: SocketState::Connected,
+            timeout_ms: 1000,
+            messages_sent: 0,
+            messages_received: 0,
+            bytes_sent: 0,
+            bytes_received: 0,
+            error_count: 0,
+            cumulative_latency_us: 0,
+            registered_at: Utc::now(),
+            last_activity: None,
+        };
+        assert!(socket.average_latency_us().abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_send_error_increments_error_count() {
+        let mgr = setup_manager(); // Listening, not Connected
+        // This send will fail because source is not Connected
+        let _r = mgr.send("san-k7", "bash-engine", IpcMessageType::Request, "x");
+        let socket = mgr.get_socket("san-k7");
+        assert_eq!(socket.map(|s| s.error_count).unwrap_or(0), 1);
+    }
+
+    #[test]
+    fn test_send_updates_last_activity() {
+        let mgr = setup_connected();
+        let _r = mgr.send("san-k7", "bash-engine", IpcMessageType::Request, "data");
+        let socket = mgr.get_socket("san-k7");
+        assert!(socket.as_ref().and_then(|s| s.last_activity).is_some());
+    }
+
+    #[test]
+    fn test_overall_health_mixed_states() {
+        let mgr = setup_connected();
+        mgr.close("san-k7").ok(); // Now closed
+        let health = mgr.overall_health();
+        // One connected (1.0), one closed (0.0) => avg = 0.5
+        assert!((health - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_messages_between_wrong_direction() {
+        let mgr = setup_connected();
+        let _r = mgr.send("san-k7", "bash-engine", IpcMessageType::Request, "x");
+        let msgs = mgr.messages_between("bash-engine", "san-k7"); // reversed
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn test_messages_by_type_empty() {
+        let mgr = setup_connected();
+        let msgs = mgr.messages_by_type(IpcMessageType::Response);
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn test_response_message_type() {
+        let mgr = setup_connected();
+        let result = mgr.send(
+            "bash-engine",
+            "san-k7",
+            IpcMessageType::Response,
+            "result",
+        );
+        assert!(result.is_ok());
+        let msgs = mgr.messages_by_type(IpcMessageType::Response);
+        assert_eq!(msgs.len(), 1);
+    }
 }

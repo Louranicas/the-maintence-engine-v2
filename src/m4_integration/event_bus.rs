@@ -653,4 +653,395 @@ mod tests {
         assert_eq!(info.name, "health");
         assert_eq!(info.event_count, 0);
     }
+
+    // --- Additional tests to reach 50+ ---
+
+    #[test]
+    fn test_default_creates_same_as_new() {
+        let d = EventBus::default();
+        let n = EventBus::new();
+        assert_eq!(d.channel_count(), n.channel_count());
+    }
+
+    #[test]
+    fn test_subscribe_empty_subscriber_id_fails() {
+        let bus = EventBus::new();
+        let result = bus.subscribe("", "health", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_publish_empty_source_fails() {
+        let bus = EventBus::new();
+        let result = bus.publish("health", "tick", "{}", "");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_channel_then_subscribe() {
+        let bus = EventBus::new();
+        assert!(bus.create_channel("custom").is_ok());
+        assert!(bus.subscribe("agent-1", "custom", None).is_ok());
+        let subs = bus.get_subscribers("custom");
+        assert_eq!(subs.len(), 1);
+    }
+
+    #[test]
+    fn test_create_channel_then_publish() {
+        let bus = EventBus::new();
+        assert!(bus.create_channel("custom-events").is_ok());
+        let result = bus.publish("custom-events", "tick", r#"{"v":1}"#, "source");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_publish_increments_channel_event_count() {
+        let bus = EventBus::new();
+        let _r1 = bus.publish("health", "ping", "{}", "src");
+        let _r2 = bus.publish("health", "pong", "{}", "src");
+        let info = bus.get_channel_info("health");
+        assert!(info.is_some());
+        let info = info.unwrap_or_else(|| ChannelInfo {
+            name: String::new(),
+            event_count: 0,
+            subscriber_count: 0,
+            created_at: Utc::now(),
+        });
+        assert_eq!(info.event_count, 2);
+    }
+
+    #[test]
+    fn test_subscribe_updates_channel_subscriber_count() {
+        let bus = EventBus::new();
+        assert!(bus.subscribe("a", "health", None).is_ok());
+        assert!(bus.subscribe("b", "health", None).is_ok());
+        let info = bus.get_channel_info("health");
+        assert!(info.is_some());
+        let info = info.unwrap_or_else(|| ChannelInfo {
+            name: String::new(),
+            event_count: 0,
+            subscriber_count: 0,
+            created_at: Utc::now(),
+        });
+        assert_eq!(info.subscriber_count, 2);
+    }
+
+    #[test]
+    fn test_unsubscribe_updates_channel_subscriber_count() {
+        let bus = EventBus::new();
+        assert!(bus.subscribe("a", "health", None).is_ok());
+        assert!(bus.subscribe("b", "health", None).is_ok());
+        assert!(bus.unsubscribe("a", "health").is_ok());
+        let info = bus.get_channel_info("health");
+        assert!(info.is_some());
+        let info = info.unwrap_or_else(|| ChannelInfo {
+            name: String::new(),
+            event_count: 0,
+            subscriber_count: 0,
+            created_at: Utc::now(),
+        });
+        assert_eq!(info.subscriber_count, 1);
+    }
+
+    #[test]
+    fn test_unsubscribe_nonexistent_subscriber_is_ok() {
+        let bus = EventBus::new();
+        // Unsubscribing a non-existent subscriber from existing channel should succeed
+        let result = bus.unsubscribe("ghost", "health");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_get_events_pagination_limit() {
+        let bus = EventBus::new();
+        for i in 0..20 {
+            let _r = bus.publish("health", "tick", &format!("{i}"), "src");
+        }
+        let events = bus.get_events("health", 5);
+        assert_eq!(events.len(), 5);
+        // Should be the last 5
+        assert_eq!(events[0].payload, "15");
+        assert_eq!(events[4].payload, "19");
+    }
+
+    #[test]
+    fn test_get_events_limit_larger_than_total() {
+        let bus = EventBus::new();
+        let _r = bus.publish("health", "tick", "{}", "src");
+        let events = bus.get_events("health", 1000);
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn test_get_events_zero_limit_returns_empty() {
+        let bus = EventBus::new();
+        let _r = bus.publish("health", "tick", "{}", "src");
+        let events = bus.get_events("health", 0);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_get_events_empty_channel() {
+        let bus = EventBus::new();
+        let events = bus.get_events("remediation", 10);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_get_subscribers_empty_channel() {
+        let bus = EventBus::new();
+        let subs = bus.get_subscribers("health");
+        assert!(subs.is_empty());
+    }
+
+    #[test]
+    fn test_get_subscribers_nonexistent_channel() {
+        let bus = EventBus::new();
+        let subs = bus.get_subscribers("nonexistent");
+        assert!(subs.is_empty());
+    }
+
+    #[test]
+    fn test_get_channel_info_nonexistent() {
+        let bus = EventBus::new();
+        let info = bus.get_channel_info("nonexistent");
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_list_channels_includes_all_defaults() {
+        let bus = EventBus::new();
+        let channels = bus.list_channels();
+        assert_eq!(channels.len(), DEFAULT_CHANNELS.len());
+    }
+
+    #[test]
+    fn test_list_channels_after_create() {
+        let bus = EventBus::new();
+        assert!(bus.create_channel("new-channel").is_ok());
+        let channels = bus.list_channels();
+        assert!(channels.contains(&"new-channel".to_string()));
+    }
+
+    #[test]
+    fn test_event_record_has_uuid_id() {
+        let bus = EventBus::new();
+        let result = bus.publish("health", "tick", "{}", "src");
+        assert!(result.is_ok());
+        let record = result.unwrap_or_else(|_| EventRecord {
+            id: String::new(),
+            channel: String::new(),
+            event_type: String::new(),
+            payload: String::new(),
+            source: String::new(),
+            timestamp: Utc::now(),
+            delivered_to: Vec::new(),
+        });
+        assert_eq!(record.id.len(), 36);
+    }
+
+    #[test]
+    fn test_event_record_contains_payload() {
+        let bus = EventBus::new();
+        let result = bus.publish("health", "tick", r#"{"key":"value"}"#, "src");
+        assert!(result.is_ok());
+        let record = result.unwrap_or_else(|_| EventRecord {
+            id: String::new(),
+            channel: String::new(),
+            event_type: String::new(),
+            payload: String::new(),
+            source: String::new(),
+            timestamp: Utc::now(),
+            delivered_to: Vec::new(),
+        });
+        assert_eq!(record.payload, r#"{"key":"value"}"#);
+    }
+
+    #[test]
+    fn test_event_record_contains_source() {
+        let bus = EventBus::new();
+        let result = bus.publish("health", "tick", "{}", "monitor-42");
+        assert!(result.is_ok());
+        let record = result.unwrap_or_else(|_| EventRecord {
+            id: String::new(),
+            channel: String::new(),
+            event_type: String::new(),
+            payload: String::new(),
+            source: String::new(),
+            timestamp: Utc::now(),
+            delivered_to: Vec::new(),
+        });
+        assert_eq!(record.source, "monitor-42");
+    }
+
+    #[test]
+    fn test_publish_no_subscribers_delivers_to_none() {
+        let bus = EventBus::new();
+        let result = bus.publish("health", "tick", "{}", "src");
+        assert!(result.is_ok());
+        let record = result.unwrap_or_else(|_| EventRecord {
+            id: String::new(),
+            channel: String::new(),
+            event_type: String::new(),
+            payload: String::new(),
+            source: String::new(),
+            timestamp: Utc::now(),
+            delivered_to: Vec::new(),
+        });
+        assert!(record.delivered_to.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_filters_on_same_channel() {
+        let bus = EventBus::new();
+        assert!(bus.subscribe("a1", "health", Some("critical".into())).is_ok());
+        assert!(bus.subscribe("a2", "health", Some("warning".into())).is_ok());
+        assert!(bus.subscribe("a3", "health", None).is_ok());
+
+        let result = bus.publish("health", "critical", "{}", "src");
+        assert!(result.is_ok());
+        let record = result.unwrap_or_else(|_| EventRecord {
+            id: String::new(),
+            channel: String::new(),
+            event_type: String::new(),
+            payload: String::new(),
+            source: String::new(),
+            timestamp: Utc::now(),
+            delivered_to: Vec::new(),
+        });
+        // a1 (filter=critical matches) + a3 (no filter) = 2
+        assert_eq!(record.delivered_to.len(), 2);
+        assert!(record.delivered_to.contains(&"a1".to_string()));
+        assert!(record.delivered_to.contains(&"a3".to_string()));
+    }
+
+    #[test]
+    fn test_total_events_across_channels() {
+        let bus = EventBus::new();
+        let _r1 = bus.publish("health", "t", "{}", "s");
+        let _r2 = bus.publish("metrics", "t", "{}", "s");
+        let _r3 = bus.publish("learning", "t", "{}", "s");
+        let _r4 = bus.publish("learning", "t", "{}", "s");
+        assert_eq!(bus.total_events(), 4);
+    }
+
+    #[test]
+    fn test_channel_count_unchanged_after_publish() {
+        let bus = EventBus::new();
+        let before = bus.channel_count();
+        let _r = bus.publish("health", "t", "{}", "s");
+        assert_eq!(bus.channel_count(), before);
+    }
+
+    #[test]
+    fn test_subscribe_to_multiple_channels() {
+        let bus = EventBus::new();
+        assert!(bus.subscribe("agent-x", "health", None).is_ok());
+        assert!(bus.subscribe("agent-x", "metrics", None).is_ok());
+        let health_subs = bus.get_subscribers("health");
+        let metrics_subs = bus.get_subscribers("metrics");
+        assert_eq!(health_subs.len(), 1);
+        assert_eq!(metrics_subs.len(), 1);
+    }
+
+    #[test]
+    fn test_unsubscribe_only_removes_from_target_channel() {
+        let bus = EventBus::new();
+        assert!(bus.subscribe("agent-x", "health", None).is_ok());
+        assert!(bus.subscribe("agent-x", "metrics", None).is_ok());
+        assert!(bus.unsubscribe("agent-x", "health").is_ok());
+        assert!(bus.get_subscribers("health").is_empty());
+        assert_eq!(bus.get_subscribers("metrics").len(), 1);
+    }
+
+    #[test]
+    fn test_event_log_capacity_at_boundary() {
+        let bus = EventBus::new();
+        // Fill to exactly capacity
+        for i in 0..EVENT_LOG_CAPACITY {
+            let _r = bus.publish("health", "tick", &format!("{i}"), "s");
+        }
+        let log_len = bus.event_log.read().len();
+        assert_eq!(log_len, EVENT_LOG_CAPACITY);
+
+        // One more should evict the first
+        let _r = bus.publish("health", "tick", "overflow", "s");
+        let log_len = bus.event_log.read().len();
+        assert_eq!(log_len, EVENT_LOG_CAPACITY);
+    }
+
+    #[test]
+    fn test_subscription_clone() {
+        let sub = Subscription {
+            subscriber_id: "agent-1".into(),
+            channel: "health".into(),
+            filter: Some("critical".into()),
+            created_at: Utc::now(),
+        };
+        let cloned = sub.clone();
+        assert_eq!(cloned.subscriber_id, "agent-1");
+        assert_eq!(cloned.channel, "health");
+        assert_eq!(cloned.filter.as_deref(), Some("critical"));
+    }
+
+    #[test]
+    fn test_channel_info_clone() {
+        let info = ChannelInfo {
+            name: "test".into(),
+            event_count: 42,
+            subscriber_count: 5,
+            created_at: Utc::now(),
+        };
+        let cloned = info.clone();
+        assert_eq!(cloned.name, "test");
+        assert_eq!(cloned.event_count, 42);
+        assert_eq!(cloned.subscriber_count, 5);
+    }
+
+    #[test]
+    fn test_event_record_clone() {
+        let record = EventRecord {
+            id: "test-id".into(),
+            channel: "health".into(),
+            event_type: "tick".into(),
+            payload: "{}".into(),
+            source: "src".into(),
+            timestamp: Utc::now(),
+            delivered_to: vec!["a".into(), "b".into()],
+        };
+        let cloned = record.clone();
+        assert_eq!(cloned.id, "test-id");
+        assert_eq!(cloned.delivered_to.len(), 2);
+    }
+
+    #[test]
+    fn test_many_subscribers_one_channel() {
+        let bus = EventBus::new();
+        for i in 0..20 {
+            let sub_id = format!("agent-{i}");
+            assert!(bus.subscribe(&sub_id, "health", None).is_ok());
+        }
+        let subs = bus.get_subscribers("health");
+        assert_eq!(subs.len(), 20);
+
+        let result = bus.publish("health", "tick", "{}", "src");
+        assert!(result.is_ok());
+        let record = result.unwrap_or_else(|_| EventRecord {
+            id: String::new(),
+            channel: String::new(),
+            event_type: String::new(),
+            payload: String::new(),
+            source: String::new(),
+            timestamp: Utc::now(),
+            delivered_to: Vec::new(),
+        });
+        assert_eq!(record.delivered_to.len(), 20);
+    }
+
+    #[test]
+    fn test_create_channel_duplicate_fails() {
+        let bus = EventBus::new();
+        // "health" already exists as default
+        assert!(bus.create_channel("health").is_err());
+    }
 }

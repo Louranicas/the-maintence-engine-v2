@@ -1168,6 +1168,515 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // 19. test_calculate_all_issue_types
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_calculate_all_issue_types() {
+        let calc = make_calculator();
+        let issue_types = [
+            IssueType::HealthFailure,
+            IssueType::LatencySpike,
+            IssueType::ErrorRateHigh,
+            IssueType::MemoryPressure,
+            IssueType::DiskPressure,
+            IssueType::ConnectionFailure,
+            IssueType::Timeout,
+            IssueType::Crash,
+        ];
+
+        for issue in &issue_types {
+            let result = calc.calculate("svc-all", *issue, Severity::Medium);
+            assert!(result.is_ok());
+            if let Ok(f) = result {
+                assert!(f.calibrated_confidence >= 0.0);
+                assert!(f.calibrated_confidence <= 1.0);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 20. test_calculate_all_severities
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_calculate_all_severities() {
+        let calc = make_calculator();
+        let severities = [
+            Severity::Low,
+            Severity::Medium,
+            Severity::High,
+            Severity::Critical,
+        ];
+
+        for sev in &severities {
+            let result = calc.calculate("svc-sev", IssueType::Crash, *sev);
+            assert!(result.is_ok());
+            if let Ok(f) = result {
+                assert!((f.severity_score - sev.score()).abs() < f64::EPSILON);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 21. test_higher_severity_changes_confidence
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_higher_severity_changes_confidence() {
+        let calc = make_calculator();
+
+        let low = calc.calculate("svc", IssueType::Crash, Severity::Low);
+        let critical = calc.calculate("svc", IssueType::Crash, Severity::Critical);
+
+        assert!(low.is_ok());
+        assert!(critical.is_ok());
+
+        if let (Ok(l), Ok(c)) = (low, critical) {
+            // Higher severity should yield different confidence
+            assert!((l.severity_score - c.severity_score).abs() > 0.1);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 22. test_record_outcome_updates_counters
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_record_outcome_updates_counters() {
+        let calc = make_calculator();
+
+        let _ = calc.record_outcome("svc-count", "crash", "restart", true, 0.8);
+        let _ = calc.record_outcome("svc-count", "crash", "restart", false, 0.8);
+        let _ = calc.record_outcome("svc-count", "crash", "restart", true, 0.8);
+
+        assert_eq!(calc.total_records(), 3);
+        let rate = calc.get_historical_success_rate("svc-count");
+        assert!((rate - 2.0 / 3.0).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 23. test_all_successes_success_rate
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_all_successes_success_rate() {
+        let calc = make_calculator();
+        seed_history(&calc, "svc-perfect", 10, 0, 0.8);
+        let rate = calc.get_historical_success_rate("svc-perfect");
+        assert!((rate - 1.0).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 24. test_pattern_strength_clamped_negative
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pattern_strength_clamped_negative() {
+        let calc = make_calculator();
+        let result = calc.update_pattern_strength("key-neg", -0.5);
+        assert!(result.is_ok());
+        let guard = calc.pattern_cache.read();
+        let val = guard.get("key-neg").copied().unwrap_or(1.0);
+        assert!(val.abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 25. test_pathway_weight_clamped_high
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pathway_weight_clamped_high() {
+        let calc = make_calculator();
+        let result = calc.update_pathway_weight("key-high", 2.0);
+        assert!(result.is_ok());
+        let guard = calc.pathway_weights.read();
+        let val = guard.get("key-high").copied().unwrap_or(0.0);
+        assert!((val - 1.0).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 26. test_multiple_services_independent
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_multiple_services_independent() {
+        let calc = make_calculator();
+        seed_history(&calc, "svc-a", 10, 0, 0.9);
+        seed_history(&calc, "svc-b", 0, 10, 0.9);
+
+        let rate_a = calc.get_historical_success_rate("svc-a");
+        let rate_b = calc.get_historical_success_rate("svc-b");
+
+        assert!((rate_a - 1.0).abs() < f64::EPSILON);
+        assert!((rate_b - 0.0).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 27. test_calibration_perfectly_calibrated
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_calibration_perfectly_calibrated() {
+        let calc = make_calculator();
+        // 50% confidence, 50% success -> offset should be near 0
+        for _ in 0..5 {
+            let _ = calc.record_outcome("svc-cal", "crash", "restart", true, 0.5);
+        }
+        for _ in 0..5 {
+            let _ = calc.record_outcome("svc-cal", "crash", "restart", false, 0.5);
+        }
+        let offset = calc.get_calibration_offset("svc-cal");
+        assert!(offset.abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 28. test_calibrate_clamps_result
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_calibrate_clamps_result() {
+        let calc = make_calculator();
+        // With no history, calibrate should be identity
+        let result = calc.calibrate(0.5, "nonexistent");
+        assert!((result - 0.5).abs() < f64::EPSILON);
+
+        // Calibrate extreme values
+        let result = calc.calibrate(1.0, "nonexistent");
+        assert!(result <= 1.0);
+        assert!(result >= 0.0);
+
+        let result = calc.calibrate(0.0, "nonexistent");
+        assert!(result <= 1.0);
+        assert!(result >= 0.0);
+    }
+
+    // ------------------------------------------------------------------
+    // 29. test_time_factor_no_actions_returns_default
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_time_factor_no_actions_returns_default() {
+        let calc = make_calculator();
+        let tf = calc.calculate_time_factor("nonexistent");
+        assert!((tf - DEFAULT_NO_HISTORY_CONFIDENCE).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 30. test_calculate_factors_all_populated
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_calculate_factors_all_populated() {
+        let calc = make_calculator();
+        let _ = calc.update_pattern_strength("svc-full:health_failure", 0.8);
+        let _ = calc.update_pathway_weight("svc-full", 0.6);
+        seed_history(&calc, "svc-full", 8, 2, 0.7);
+
+        let result = calc.calculate("svc-full", IssueType::HealthFailure, Severity::High);
+        assert!(result.is_ok());
+        if let Ok(f) = result {
+            assert!((f.pattern_match_strength - 0.8).abs() < f64::EPSILON);
+            assert!((f.pathway_weight - 0.6).abs() < f64::EPSILON);
+            assert!((f.historical_success_rate - 0.8).abs() < f64::EPSILON);
+            assert!((f.severity_score - 0.75).abs() < f64::EPSILON);
+            assert!(f.raw_confidence > 0.0);
+            assert!(f.raw_confidence <= 1.0);
+            assert!(f.calibrated_confidence >= 0.0);
+            assert!(f.calibrated_confidence <= 1.0);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 31. test_issue_success_rate_multiple_types
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_issue_success_rate_multiple_types() {
+        let calc = make_calculator();
+        let _ = calc.record_outcome("svc-multi", "health_failure", "restart", true, 0.8);
+        let _ = calc.record_outcome("svc-multi", "health_failure", "restart", true, 0.8);
+        let _ = calc.record_outcome("svc-multi", "crash", "restart", false, 0.7);
+        let _ = calc.record_outcome("svc-multi", "crash", "restart", false, 0.7);
+        let _ = calc.record_outcome("svc-multi", "crash", "restart", true, 0.7);
+
+        let hf_rate = calc.get_issue_success_rate("svc-multi", "health_failure");
+        assert!((hf_rate - 1.0).abs() < f64::EPSILON); // 2/2
+
+        let crash_rate = calc.get_issue_success_rate("svc-multi", "crash");
+        assert!((crash_rate - 1.0 / 3.0).abs() < f64::EPSILON); // 1/3
+    }
+
+    // ------------------------------------------------------------------
+    // 32. test_service_count_tracks_unique_services
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_service_count_tracks_unique_services() {
+        let calc = make_calculator();
+        assert_eq!(calc.service_count(), 0);
+
+        let _ = calc.record_outcome("svc-1", "crash", "restart", true, 0.8);
+        assert_eq!(calc.service_count(), 1);
+
+        let _ = calc.record_outcome("svc-1", "crash", "restart", true, 0.8);
+        assert_eq!(calc.service_count(), 1); // Same service, no increase
+
+        let _ = calc.record_outcome("svc-2", "crash", "restart", true, 0.8);
+        assert_eq!(calc.service_count(), 2);
+
+        let _ = calc.record_outcome("svc-3", "crash", "restart", true, 0.8);
+        assert_eq!(calc.service_count(), 3);
+    }
+
+    // ------------------------------------------------------------------
+    // 33. test_raw_confidence_formula
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_raw_confidence_formula() {
+        let calc = make_calculator();
+        // All inputs at 1.0:
+        // 0.3*1.0 + 0.25*1.0 + 0.2*1.0 + 0.15*1.0 + 0.1*1.0 = 1.0
+        let _ = calc.update_pattern_strength("svc-max:health_failure", 1.0);
+        let _ = calc.update_pathway_weight("svc-max", 1.0);
+        seed_history(&calc, "svc-max", 100, 0, 1.0);
+
+        let result = calc.calculate("svc-max", IssueType::HealthFailure, Severity::Critical);
+        assert!(result.is_ok());
+        if let Ok(f) = result {
+            // time_factor for all-success recent should be near 1.0
+            assert!(f.raw_confidence > 0.9);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 34. test_confidence_zero_inputs
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_confidence_zero_inputs() {
+        // Direct call to calculate_confidence with all zeros
+        let result = calculate_confidence(0.0, 0.0, 0.0, 0.0, 0.0);
+        assert!((result - 0.0).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 35. test_confidence_half_inputs
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_confidence_half_inputs() {
+        let result = calculate_confidence(0.5, 0.5, 0.5, 0.5, 0.5);
+        assert!((result - 0.5).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 36. test_confidence_all_ones
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_confidence_all_ones() {
+        let result = calculate_confidence(1.0, 1.0, 1.0, 1.0, 1.0);
+        assert!((result - 1.0).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 37. test_pattern_strength_overwrite
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pattern_strength_overwrite() {
+        let calc = make_calculator();
+        let _ = calc.update_pattern_strength("key", 0.3);
+        let _ = calc.update_pattern_strength("key", 0.8);
+
+        let guard = calc.pattern_cache.read();
+        let val = guard.get("key").copied().unwrap_or(0.0);
+        assert!((val - 0.8).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 38. test_pathway_weight_overwrite
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pathway_weight_overwrite() {
+        let calc = make_calculator();
+        let _ = calc.update_pathway_weight("pw-key", 0.2);
+        let _ = calc.update_pathway_weight("pw-key", 0.9);
+
+        let guard = calc.pathway_weights.read();
+        let val = guard.get("pw-key").copied().unwrap_or(0.0);
+        assert!((val - 0.9).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 39. test_calibration_offset_bounded
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_calibration_offset_bounded() {
+        let calc = make_calculator();
+        // Extreme over-confidence: predicted 1.0, actual 0% success
+        for _ in 0..20 {
+            let _ = calc.record_outcome("svc-bound", "crash", "restart", false, 1.0);
+        }
+        let offset = calc.get_calibration_offset("svc-bound");
+        assert!(offset >= -MAX_CALIBRATION_OFFSET);
+        assert!(offset <= MAX_CALIBRATION_OFFSET);
+    }
+
+    // ------------------------------------------------------------------
+    // 40. test_get_pattern_strength_service_only_fallback
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_get_pattern_strength_service_only_fallback() {
+        let calc = make_calculator();
+        let _ = calc.update_pattern_strength("svc-fb-only", 0.65);
+
+        // When calculating for svc-fb-only with a crash issue (no specific key),
+        // it should fall back to the service-only key
+        let factors = calc.calculate("svc-fb-only", IssueType::Crash, Severity::Medium);
+        assert!(factors.is_ok());
+        if let Ok(f) = factors {
+            assert!((f.pattern_match_strength - 0.65).abs() < f64::EPSILON);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 41. test_get_pathway_weight_default
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_get_pathway_weight_default() {
+        let calc = make_calculator();
+        // No pathway weight set -> should use default
+        let factors = calc.calculate("svc-no-pw", IssueType::Crash, Severity::Low);
+        assert!(factors.is_ok());
+        if let Ok(f) = factors {
+            assert!((f.pathway_weight - DEFAULT_NO_HISTORY_CONFIDENCE).abs() < f64::EPSILON);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 42. test_total_records_multiple_services
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_total_records_multiple_services() {
+        let calc = make_calculator();
+        for i in 0..5 {
+            let _ = calc.record_outcome(&format!("svc-{i}"), "crash", "restart", true, 0.8);
+        }
+        assert_eq!(calc.total_records(), 5);
+        assert_eq!(calc.service_count(), 5);
+    }
+
+    // ------------------------------------------------------------------
+    // 43. test_time_factor_all_failures_near_zero
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_time_factor_all_failures_near_zero() {
+        let calc = make_calculator();
+        for _ in 0..10 {
+            let _ = calc.record_outcome("svc-fail-tf", "crash", "restart", false, 0.8);
+        }
+        let tf = calc.calculate_time_factor("svc-fail-tf");
+        // All recent failures -> time factor should be near 0.0
+        assert!(tf < 0.1);
+    }
+
+    // ------------------------------------------------------------------
+    // 44. test_record_outcome_issue_type_counters
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_record_outcome_issue_type_counters() {
+        let calc = make_calculator();
+        let _ = calc.record_outcome("svc-it", "health_failure", "restart", true, 0.8);
+        let _ = calc.record_outcome("svc-it", "health_failure", "restart", false, 0.7);
+
+        let rate = calc.get_issue_success_rate("svc-it", "health_failure");
+        assert!((rate - 0.5).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 45. test_calibrate_applies_offset
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_calibrate_applies_offset() {
+        let calc = make_calculator();
+        // Create under-confident scenario: predicted 0.3, all succeed
+        for _ in 0..10 {
+            let _ = calc.record_outcome("svc-apply", "crash", "restart", true, 0.3);
+        }
+        let offset = calc.get_calibration_offset("svc-apply");
+        assert!(offset > 0.0); // under-confident -> positive
+
+        let calibrated = calc.calibrate(0.5, "svc-apply");
+        assert!(calibrated > 0.5); // should be boosted
+    }
+
+    // ------------------------------------------------------------------
+    // 46. test_calculate_returns_severity_score
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_calculate_returns_severity_score() {
+        let calc = make_calculator();
+        let result = calc.calculate("svc", IssueType::Crash, Severity::Critical);
+        assert!(result.is_ok());
+        if let Ok(f) = result {
+            assert!((f.severity_score - 1.0).abs() < f64::EPSILON);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 47. test_pattern_cache_multiple_keys
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pattern_cache_multiple_keys() {
+        let calc = make_calculator();
+        let _ = calc.update_pattern_strength("k1", 0.1);
+        let _ = calc.update_pattern_strength("k2", 0.2);
+        let _ = calc.update_pattern_strength("k3", 0.3);
+
+        let guard = calc.pattern_cache.read();
+        assert_eq!(guard.len(), 3);
+    }
+
+    // ------------------------------------------------------------------
+    // 48. test_pathway_weights_multiple_keys
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_pathway_weights_multiple_keys() {
+        let calc = make_calculator();
+        let _ = calc.update_pathway_weight("pw1", 0.1);
+        let _ = calc.update_pathway_weight("pw2", 0.2);
+
+        let guard = calc.pathway_weights.read();
+        assert_eq!(guard.len(), 2);
+    }
+
+    // ------------------------------------------------------------------
+    // 49. test_history_maintained_per_service
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_history_maintained_per_service() {
+        let calc = make_calculator();
+        seed_history(&calc, "svc-a", 5, 5, 0.5);
+        seed_history(&calc, "svc-b", 3, 7, 0.5);
+
+        let rate_a = calc.get_historical_success_rate("svc-a");
+        let rate_b = calc.get_historical_success_rate("svc-b");
+
+        assert!((rate_a - 0.5).abs() < f64::EPSILON);
+        assert!((rate_b - 0.3).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // 50. test_confidence_formula_weighted_correctly
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_confidence_formula_weighted_correctly() {
+        // historical=1.0, rest=0.0 -> result = 0.3
+        let r1 = calculate_confidence(1.0, 0.0, 0.0, 0.0, 0.0);
+        assert!((r1 - 0.3).abs() < f64::EPSILON);
+
+        // pattern=1.0, rest=0.0 -> result = 0.25
+        let r2 = calculate_confidence(0.0, 1.0, 0.0, 0.0, 0.0);
+        assert!((r2 - 0.25).abs() < f64::EPSILON);
+
+        // severity=1.0, rest=0.0 -> result = 0.2
+        let r3 = calculate_confidence(0.0, 0.0, 1.0, 0.0, 0.0);
+        assert!((r3 - 0.2).abs() < f64::EPSILON);
+
+        // pathway=1.0, rest=0.0 -> result = 0.15
+        let r4 = calculate_confidence(0.0, 0.0, 0.0, 1.0, 0.0);
+        assert!((r4 - 0.15).abs() < f64::EPSILON);
+
+        // time=1.0, rest=0.0 -> result = 0.1
+        let r5 = calculate_confidence(0.0, 0.0, 0.0, 0.0, 1.0);
+        assert!((r5 - 0.1).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
     // 18. test_pattern_key_fallback_hierarchy
     // ------------------------------------------------------------------
     #[test]

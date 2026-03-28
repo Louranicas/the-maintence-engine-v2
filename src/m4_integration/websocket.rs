@@ -1032,4 +1032,141 @@ mod tests {
             .receive_message(&conn_id, FrameType::Text, "x")
             .is_err());
     }
+
+    // --- Additional tests to reach 50+ ---
+
+    #[test]
+    fn test_default_creates_same_as_new() {
+        let d = WebSocketClient::default();
+        let n = WebSocketClient::new();
+        assert_eq!(d.total_connection_count(), n.total_connection_count());
+        assert_eq!(d.message_count(), n.message_count());
+    }
+
+    #[test]
+    fn test_receive_on_nonexistent_fails() {
+        let client = WebSocketClient::new();
+        assert!(client
+            .receive_message("none", FrameType::Text, "x")
+            .is_err());
+    }
+
+    #[test]
+    fn test_receive_message_updates_counters() {
+        let (client, conn_id) = setup_client_with_connection();
+        let _ = client.receive_message(&conn_id, FrameType::Text, "data123");
+        let conn = client.get_connection(&conn_id);
+        assert_eq!(conn.as_ref().map(|c| c.messages_received).unwrap_or(0), 1);
+        assert_eq!(conn.map(|c| c.bytes_received).unwrap_or(0), 7);
+    }
+
+    #[test]
+    fn test_close_code_all_variants() {
+        assert_eq!(CloseCode::GoingAway.code(), 1001);
+        assert_eq!(CloseCode::ProtocolError.code(), 1002);
+        assert_eq!(CloseCode::UnsupportedData.code(), 1003);
+        assert_eq!(CloseCode::NoStatus.code(), 1005);
+        assert_eq!(CloseCode::Abnormal.code(), 1006);
+        assert_eq!(CloseCode::InvalidPayload.code(), 1007);
+        assert_eq!(CloseCode::PolicyViolation.code(), 1008);
+        assert_eq!(CloseCode::MessageTooBig.code(), 1009);
+    }
+
+    #[test]
+    fn test_close_code_is_normal_false_variants() {
+        assert!(!CloseCode::ProtocolError.is_normal());
+        assert!(!CloseCode::UnsupportedData.is_normal());
+        assert!(!CloseCode::Abnormal.is_normal());
+        assert!(!CloseCode::PolicyViolation.is_normal());
+        assert!(!CloseCode::MessageTooBig.is_normal());
+    }
+
+    #[test]
+    fn test_frame_type_display_close() {
+        assert_eq!(FrameType::Close.to_string(), "CLOSE");
+        assert_eq!(FrameType::Ping.to_string(), "PING");
+        assert_eq!(FrameType::Pong.to_string(), "PONG");
+    }
+
+    #[test]
+    fn test_health_score_with_pings_no_pongs() {
+        let (client, conn_id) = setup_client_with_connection();
+        let _ = client.send_message(&conn_id, FrameType::Ping, "");
+        let _ = client.send_message(&conn_id, FrameType::Ping, "");
+        let conn = client.get_connection(&conn_id);
+        let score = conn.map(|c| c.health_score()).unwrap_or(0.0);
+        // pong_ratio = 0/2 = 0.0
+        assert!(score.abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_health_score_with_pings_and_pongs() {
+        let (client, conn_id) = setup_client_with_connection();
+        let _ = client.send_message(&conn_id, FrameType::Ping, "");
+        let _ = client.send_message(&conn_id, FrameType::Ping, "");
+        let _ = client.receive_message(&conn_id, FrameType::Pong, "");
+        let _ = client.receive_message(&conn_id, FrameType::Pong, "");
+        let conn = client.get_connection(&conn_id);
+        let score = conn.map(|c| c.health_score()).unwrap_or(0.0);
+        // pong_ratio = 2/2 = 1.0, no reconnect penalty
+        assert!((score - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_health_score_with_reconnect_penalty() {
+        let config = WsConfig {
+            max_reconnect_attempts: 10,
+            ..WsConfig::default()
+        };
+        let client = WebSocketClient::with_config(config);
+        let conn_id = client.connect("svc", "localhost", 8091, "/ws").unwrap_or_default();
+        client.disconnect(&conn_id, CloseCode::Abnormal).ok();
+        let _ = client.reconnect(&conn_id); // attempts = 1
+        let conn = client.get_connection(&conn_id);
+        let score = conn.map(|c| c.health_score()).unwrap_or(0.0);
+        // reconnect_penalty = 1.0 - (1 * 0.1) = 0.9
+        assert!(score < 1.0);
+        assert!(score > 0.0);
+    }
+
+    #[test]
+    fn test_active_connection_count_after_disconnect() {
+        let (client, conn_id) = setup_client_with_connection();
+        assert_eq!(client.active_connection_count(), 1);
+        client.disconnect(&conn_id, CloseCode::Normal).ok();
+        assert_eq!(client.active_connection_count(), 0);
+    }
+
+    #[test]
+    fn test_total_vs_active_connection_count() {
+        let (client, conn_id) = setup_client_with_connection();
+        let _ = client.connect("svc2", "localhost", 8092, "/ws");
+        client.disconnect(&conn_id, CloseCode::Normal).ok();
+        assert_eq!(client.total_connection_count(), 2);
+        assert_eq!(client.active_connection_count(), 1);
+    }
+
+    #[test]
+    fn test_connections_for_service_no_match() {
+        let client = WebSocketClient::new();
+        let _ = client.connect("synthex", "localhost", 8091, "/ws");
+        let conns = client.connections_for_service("nonexistent");
+        assert!(conns.is_empty());
+    }
+
+    #[test]
+    fn test_get_connection_nonexistent() {
+        let client = WebSocketClient::new();
+        assert!(client.get_connection("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_ws_config_default_values() {
+        let config = WsConfig::default();
+        assert_eq!(config.ping_interval_ms, DEFAULT_PING_INTERVAL_MS);
+        assert_eq!(config.reconnect_delay_ms, DEFAULT_RECONNECT_DELAY_MS);
+        assert_eq!(config.max_reconnect_attempts, DEFAULT_MAX_RECONNECT_ATTEMPTS);
+        assert_eq!(config.connect_timeout_ms, DEFAULT_CONNECT_TIMEOUT_MS);
+        assert_eq!(config.max_message_size, 1_048_576);
+    }
 }
