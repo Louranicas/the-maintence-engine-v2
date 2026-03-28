@@ -1028,4 +1028,72 @@ mod tests {
         let human = mgr.get_agent("@0.A").unwrap_or_else(|_| unreachable!());
         assert_eq!(human.status, AgentStatus::Active);
     }
+
+    #[test]
+    fn test_proposal_view_number() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        assert_eq!(proposal.view_number, 0);
+    }
+
+    #[test]
+    fn test_get_proposal_after_advance() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ConfigRollback, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let pid = proposal.id.clone();
+        let _ = mgr.advance_phase(&pid);
+        let fetched = mgr.get_proposal(&pid).unwrap_or_else(|_| unreachable!());
+        assert_eq!(fetched.phase, ConsensusPhase::Prepare);
+    }
+
+    #[test]
+    fn test_tally_outcome_has_completed_at() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let outcome = mgr.tally_votes(&proposal.id).unwrap_or_else(|_| unreachable!());
+        assert!(outcome.completed_at.is_some());
+    }
+
+    #[test]
+    fn test_historian_agent_exists() {
+        let mgr = PbftManager::new();
+        let fleet = mgr.get_fleet();
+        let historians = fleet.iter().filter(|a| a.role == AgentRole::Historian).count();
+        assert!(historians >= 2);
+    }
+
+    #[test]
+    fn test_fleet_all_have_valid_status() {
+        let mgr = PbftManager::new();
+        let fleet = mgr.get_fleet();
+        for agent in &fleet {
+            // All agents should have either Active or Idle status
+            assert!(
+                agent.status == AgentStatus::Active || agent.status == AgentStatus::Idle,
+                "Agent {} has unexpected status {:?}", agent.id, agent.status
+            );
+        }
+    }
+
+    #[test]
+    fn test_proposal_id_contains_view_and_seq() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        assert!(proposal.id.contains("v0"));
+        assert!(proposal.id.contains("s0"));
+    }
+
+    #[test]
+    fn test_tally_proposal_id_preserved() {
+        let mgr = PbftManager::new();
+        let proposal = mgr.create_proposal(ConsensusAction::ServiceTermination, "@0.A")
+            .unwrap_or_else(|_| unreachable!());
+        let pid = proposal.id.clone();
+        let outcome = mgr.tally_votes(&pid).unwrap_or_else(|_| unreachable!());
+        assert_eq!(outcome.proposal_id, pid);
+    }
 }

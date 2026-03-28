@@ -1058,4 +1058,36 @@ mod tests {
         let recent = processor.get_recent_events(1);
         assert_eq!(recent[0].timestamp_ms, 1099, "Most recent event should be last added");
     }
+
+    #[test]
+    fn test_multiple_pathways_in_window() {
+        let processor = StdpProcessor::new();
+        let _ = processor.record_spike("a", "b", 10, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("a", "b", 15, SpikeType::PostSynaptic);
+        let _ = processor.record_spike("x", "y", 20, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("x", "y", 25, SpikeType::PostSynaptic);
+        let _ = processor.record_spike("p", "q", 30, SpikeType::PreSynaptic);
+        let _ = processor.record_spike("p", "q", 35, SpikeType::PostSynaptic);
+        let pairs = processor.process_window().ok().unwrap_or_default();
+        assert_eq!(pairs.len(), 3);
+    }
+
+    #[test]
+    fn test_config_accessor_returns_correct_values() {
+        let config = StdpConfig {
+            ltp_rate: 0.3,
+            ltd_rate: 0.15,
+            ..Default::default()
+        };
+        let processor = StdpProcessor::with_config(config);
+        let cfg = processor.get_config();
+        assert!((cfg.ltp_rate - 0.3).abs() < f64::EPSILON);
+        assert!((cfg.ltd_rate - 0.15).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_get_timing_pairs_empty_initially() {
+        let processor = StdpProcessor::new();
+        assert!(processor.get_timing_pairs().is_empty());
+    }
 }

@@ -720,4 +720,114 @@ mod tests {
         let compliance = sched.compliance();
         assert_eq!(compliance.successes, 40);
     }
+
+    #[test]
+    fn test_history_capacity_one() {
+        let config = DecaySchedulerConfig {
+            history_capacity: 1,
+            ..Default::default()
+        };
+        let sched = DecayScheduler::with_config(config);
+        sched.record_success(Some(1), None, None, None);
+        sched.record_success(Some(2), None, None, None);
+        assert_eq!(sched.history_len(), 1);
+        let events = sched.recent_events(5);
+        assert_eq!(events[0].pathways_decayed, Some(2));
+    }
+
+    #[test]
+    fn test_failure_error_message_preserved() {
+        let sched = DecayScheduler::new();
+        sched.record_failure("specific error message".to_string());
+        let events = sched.recent_events(1);
+        assert_eq!(events[0].error.as_deref(), Some("specific error message"));
+    }
+
+    #[test]
+    fn test_success_timestamp_recent() {
+        let sched = DecayScheduler::new();
+        sched.record_success(None, None, None, None);
+        let events = sched.recent_events(1);
+        let diff = chrono::Utc::now() - events[0].timestamp;
+        assert!(diff.num_seconds() < 2);
+    }
+
+    #[test]
+    fn test_failure_timestamp_recent() {
+        let sched = DecayScheduler::new();
+        sched.record_failure("err".to_string());
+        let events = sched.recent_events(1);
+        let diff = chrono::Utc::now() - events[0].timestamp;
+        assert!(diff.num_seconds() < 2);
+    }
+
+    #[test]
+    fn test_recent_events_order_mixed() {
+        let sched = DecayScheduler::new();
+        sched.record_success(Some(1), None, None, None);
+        sched.record_failure("err".to_string());
+        sched.record_success(Some(3), None, None, None);
+
+        let events = sched.recent_events(3);
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].pathways_decayed, Some(3));
+        assert!(!events[1].success);
+        assert_eq!(events[2].pathways_decayed, Some(1));
+    }
+
+    #[test]
+    fn test_compliance_after_many_operations() {
+        let sched = DecayScheduler::new();
+        for _ in 0..100 {
+            sched.record_success(None, None, None, None);
+        }
+        for _ in 0..50 {
+            sched.record_failure("err".to_string());
+        }
+        let compliance = sched.compliance();
+        assert_eq!(compliance.total_attempts, 150);
+        assert_eq!(compliance.successes, 100);
+        assert_eq!(compliance.failures, 50);
+    }
+
+    #[test]
+    fn test_consecutive_failures_exact_threshold() {
+        let sched = DecayScheduler::new();
+        for _ in 0..(MAX_CONSECUTIVE_FAILURES - 1) {
+            sched.record_failure("err".to_string());
+        }
+        assert!(!sched.is_degraded());
+        sched.record_failure("one_more".to_string());
+        assert!(sched.is_degraded());
+    }
+
+    #[test]
+    fn test_reset_and_reuse() {
+        let sched = DecayScheduler::new();
+        sched.record_success(None, None, None, None);
+        sched.reset();
+        sched.record_failure("new_err".to_string());
+        assert_eq!(sched.history_len(), 1);
+        assert_eq!(sched.consecutive_failures(), 1);
+    }
+
+    #[test]
+    fn test_compliance_ratio_precision() {
+        let sched = DecayScheduler::new();
+        for _ in 0..3 {
+            sched.record_success(None, None, None, None);
+        }
+        sched.record_failure("err".to_string());
+        // 3/4 = 0.75
+        let compliance = sched.compliance();
+        assert!((compliance.compliance_ratio - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_pathways_pruned_preserved() {
+        let sched = DecayScheduler::new();
+        sched.record_success(None, Some(7), None, None);
+        let events = sched.recent_events(1);
+        assert_eq!(events[0].pathways_pruned, Some(7));
+    }
 }

@@ -730,4 +730,113 @@ mod tests {
 
         assert_eq!(mon.window_size(), 40);
     }
+
+    #[test]
+    fn test_snapshot_window_size_field() {
+        let mon = ThermalMonitor::new();
+        mon.record_reading(make_reading(0.5, 0.5));
+        mon.record_reading(make_reading(0.6, 0.5));
+        let snap = mon.snapshot();
+        assert_eq!(snap.window_size, 2);
+    }
+
+    #[test]
+    fn test_multiple_runaway_checks() {
+        let mon = ThermalMonitor::new();
+        mon.record_reading(make_reading(0.95, 0.50));
+        assert!(mon.check_runaway().is_some());
+        mon.record_reading(make_reading(0.50, 0.50));
+        assert!(mon.check_runaway().is_none());
+    }
+
+    #[test]
+    fn test_target_temp_in_snapshot() {
+        let mon = ThermalMonitor::new();
+        mon.record_reading(make_reading(0.5, 0.7));
+        let snap = mon.snapshot();
+        assert!((snap.target_temp - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_degraded_mode_exit() {
+        let mon = ThermalMonitor::new();
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            mon.record_failure();
+        }
+        assert!(mon.is_degraded());
+        mon.record_reading(make_reading(0.5, 0.5));
+        assert!(!mon.is_degraded());
+    }
+
+    #[test]
+    fn test_max_temp_single_reading() {
+        let mon = ThermalMonitor::new();
+        mon.record_reading(make_reading(0.42, 0.5));
+        let snap = mon.snapshot();
+        assert!((snap.max_temp - 0.42).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_below_target_no_runaway() {
+        let mon = ThermalMonitor::new();
+        mon.record_reading(make_reading(0.10, 0.50));
+        let snap = mon.snapshot();
+        assert!(!snap.runaway_detected);
+        assert!(mon.check_runaway().is_none());
+    }
+
+    #[test]
+    fn test_window_tracks_all_readings() {
+        let mon = ThermalMonitor::new();
+        for _ in 0..50 {
+            mon.record_reading(make_reading(0.5, 0.5));
+        }
+        assert_eq!(mon.window_size(), 50);
+    }
+
+    #[test]
+    fn test_config_poll_interval() {
+        let config = ThermalMonitorConfig {
+            poll_interval_secs: 60,
+            ..Default::default()
+        };
+        let mon = ThermalMonitor::with_config(config);
+        assert_eq!(mon.config().poll_interval_secs, 60);
+    }
+
+    #[test]
+    fn test_recent_readings_all() {
+        let mon = ThermalMonitor::new();
+        mon.record_reading(make_reading(0.1, 0.5));
+        mon.record_reading(make_reading(0.2, 0.5));
+        let recent = mon.recent_readings(100);
+        assert_eq!(recent.len(), 2);
+    }
+
+    #[test]
+    fn test_snapshot_after_reset() {
+        let mon = ThermalMonitor::new();
+        mon.record_reading(make_reading(0.9, 0.5));
+        mon.reset();
+        let snap = mon.snapshot();
+        assert_eq!(snap.window_size, 0);
+        assert!((snap.current_temp).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_pid_output_in_reading() {
+        let mon = ThermalMonitor::new();
+        let reading = ThermalReading {
+            temperature: 0.5,
+            target: 0.5,
+            pid_output: 0.42,
+            timestamp: Utc::now(),
+        };
+        mon.record_reading(reading);
+        let latest = mon.latest_reading();
+        assert!(latest.is_some());
+        if let Some(r) = latest {
+            assert!((r.pid_output - 0.42).abs() < f64::EPSILON);
+        }
+    }
 }

@@ -1124,4 +1124,98 @@ mod tests {
             assert!(elapsed.is_ok());
         }
     }
+
+    #[test]
+    fn test_architecture_pattern_ids() {
+        let detector = AntiPatternDetector::new();
+        let patterns = detector.patterns.read();
+        let arch_ids: Vec<&str> = patterns.iter()
+            .filter(|p| p.category == AntiPatternCategory::Architecture)
+            .map(|p| p.id.as_str())
+            .collect();
+        assert!(arch_ids.contains(&"AP-A001"));
+        assert!(arch_ids.contains(&"AP-A002"));
+        assert!(arch_ids.contains(&"AP-A003"));
+        assert!(arch_ids.contains(&"AP-A004"));
+    }
+
+    #[test]
+    fn test_severity_ordering() {
+        let detector = AntiPatternDetector::new();
+        let patterns = detector.patterns.read();
+        // AP-C001 (1.0) > AP-C004 (0.7) > AP-A003 (0.6)
+        let c001 = patterns.iter().find(|p| p.id == "AP-C001").map(|p| p.severity).unwrap_or(0.0);
+        let c004 = patterns.iter().find(|p| p.id == "AP-C004").map(|p| p.severity).unwrap_or(0.0);
+        let a003 = patterns.iter().find(|p| p.id == "AP-A003").map(|p| p.severity).unwrap_or(0.0);
+        assert!(c001 > c004);
+        assert!(c004 > a003);
+    }
+
+    #[test]
+    fn test_detection_rule_in_custom_pattern() {
+        let detector = AntiPatternDetector::new();
+        let _ = detector.register_pattern(
+            "AP-RULE", AntiPatternCategory::Code, "with_rule", "desc", 0.5,
+        );
+        // Custom registered patterns have empty detection_rule
+        let patterns = detector.patterns.read();
+        let custom = patterns.iter().find(|p| p.id == "AP-RULE");
+        assert!(custom.is_some());
+        if let Some(p) = custom {
+            assert!(p.detection_rule.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_detection_description_in_defaults() {
+        let detector = AntiPatternDetector::new();
+        let patterns = detector.patterns.read();
+        let c001 = patterns.iter().find(|p| p.id == "AP-C001");
+        assert!(c001.is_some());
+        if let Some(p) = c001 {
+            assert!(p.description.contains("unwrap"));
+        }
+    }
+
+    #[test]
+    fn test_get_unresolved_empty_initially() {
+        let detector = AntiPatternDetector::new();
+        assert!(detector.get_unresolved().is_empty());
+    }
+
+    #[test]
+    fn test_violation_count_matches_individual_counts() {
+        let detector = AntiPatternDetector::new();
+        let _ = detector.detect("AP-C001", "v1");
+        let _ = detector.detect("AP-C001", "v2");
+        let _ = detector.detect("AP-W001", "v3");
+        let total = detector.violation_count();
+        let c001 = detector.get_violations("AP-C001");
+        let w001 = detector.get_violations("AP-W001");
+        assert_eq!(total, (c001 + w001) as usize);
+    }
+
+    #[test]
+    fn test_most_frequent_returns_empty_for_zero_n() {
+        let detector = AntiPatternDetector::new();
+        let _ = detector.detect("AP-C001", "v");
+        let top = detector.most_frequent_violations(0);
+        assert!(top.is_empty());
+    }
+
+    #[test]
+    fn test_category_equality() {
+        assert_eq!(AntiPatternCategory::Code, AntiPatternCategory::Code);
+        assert_ne!(AntiPatternCategory::Code, AntiPatternCategory::Workflow);
+    }
+
+    #[test]
+    fn test_all_default_severities_in_range() {
+        let detector = AntiPatternDetector::new();
+        let patterns = detector.patterns.read();
+        for p in patterns.iter() {
+            assert!(p.severity >= 0.0 && p.severity <= 1.0,
+                "Pattern {} has severity {} out of range", p.id, p.severity);
+        }
+    }
 }
