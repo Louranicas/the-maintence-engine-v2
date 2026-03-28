@@ -2204,7 +2204,7 @@ async fn handle_learning(
             "ltp_rate": 0.1,
             "ltd_rate": 0.05,
             "window_ms": 100,
-            "decay_rate": 0.001,
+            "decay_rate": 0.1, // HRS-001 corrected (was hardcoded 0.001)
         },
         "antipatterns": {
             "pattern_count": state.engine.antipattern_detector().pattern_count(),
