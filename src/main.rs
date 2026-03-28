@@ -643,14 +643,16 @@ fn spawn_field_tracking(state: &Arc<AppState>) {
                             .get("spheres")
                             .and_then(serde_json::Value::as_u64)
                             .unwrap_or(0) as u32;
+                        // Capture r BEFORE update for morphogenic delta
+                        let r_before = field_state.engine.field_bridge().current_r();
+
                         let _ = field_state
                             .engine
                             .field_bridge()
                             .update_field_state(r, k, spheres);
 
-                        // Check for morphogenic trigger
-                        let r_current = field_state.engine.field_bridge().current_r();
-                        let r_delta = r - r_current;
+                        // Check for morphogenic trigger (r_delta = new - old)
+                        let r_delta = r - r_before;
                         if let Some(_action) = field_state
                             .engine
                             .morphogenic_adapter()
