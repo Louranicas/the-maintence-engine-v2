@@ -30,6 +30,7 @@ pub mod voting;
 pub mod dissent;
 pub mod view_change;
 pub mod quorum;
+pub mod checkpoint;
 
 use crate::AgentRole;
 
