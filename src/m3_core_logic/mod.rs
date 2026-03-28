@@ -19,6 +19,7 @@
 //! - [Auto-Remediation](../../nam/L0_AUTO_REMEDIATION.md)
 
 pub mod action;
+pub mod approval;
 pub mod confidence;
 pub mod feedback;
 pub mod outcome;

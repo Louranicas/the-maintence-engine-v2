@@ -99,7 +99,7 @@ impl Default for StdpConfig {
             window_ms: 100,
             weight_min: 0.0,
             weight_max: 1.0,
-            decay_rate: 0.001,
+            decay_rate: 0.1, // HRS-001 fix: was 0.001 (100x too low)
             tau_decay_s: 604_800.0, // 7 days in seconds
             decay_floor: 0.1,
         }
@@ -476,7 +476,7 @@ mod tests {
         assert_eq!(config.window_ms, 100);
         assert!((config.weight_min - 0.0).abs() < f64::EPSILON);
         assert!((config.weight_max - 1.0).abs() < f64::EPSILON);
-        assert!((config.decay_rate - 0.001).abs() < f64::EPSILON);
+        assert!((config.decay_rate - 0.1).abs() < f64::EPSILON); // HRS-001 corrected
     }
 
     #[test]

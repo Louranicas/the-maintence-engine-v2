@@ -251,7 +251,7 @@ impl Default for StdpConfig {
             ltp_rate: 0.1,
             ltd_rate: 0.05,
             stdp_window_ms: 100,
-            decay_rate: 0.001,
+            decay_rate: 0.1, // HRS-001 fix: was 0.001 (100x too low)
         }
     }
 }
