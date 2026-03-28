@@ -192,6 +192,84 @@ ME V2 (62,522 LOC, 2,288 tests, 8 layers)
 │   ├── Morphogenic: |r_delta| > 0.05 triggers adaptation
 │   └── Evolution gate: accept mutation only if r_after >= r_baseline
 │
+├── HABITAT WIRING (17 services)
+│   │
+│   ├── OUTBOUND HEALTH POLLING (12 services, 30s interval)
+│   │   ├── ME:8080 ──GET──> DevOps:8081/health
+│   │   ├── ME:8080 ──GET──> SYNTHEX:8090/api/health
+│   │   ├── ME:8080 ──GET──> K7:8100/health (59 modules, 11 commands)
+│   │   ├── ME:8080 ──GET──> NAIS:8101/health
+│   │   ├── ME:8080 ──GET──> Bash:8102/health
+│   │   ├── ME:8080 ──GET──> TM:8103/health
+│   │   ├── ME:8080 ──GET──> CCM:8104/health
+│   │   ├── ME:8080 ──GET──> TL:8105/health (15 tools registered)
+│   │   ├── ME:8080 ──GET──> CSV7:8110/health
+│   │   ├── ME:8080 ──GET──> POVM:8125/health
+│   │   ├── ME:8080 ──GET──> RM:8130/health (64,400 entries)
+│   │   └── ME:8080 ──GET──> PV2:8132/health (r=0.88, 83 spheres, K=1.5)
+│   │
+│   ├── OUTBOUND BRIDGES (active data flow)
+│   │   ├── ME:8080 ──POST──> PV2:8132/bus/events (EventBus bridge, 10s, 6 channels)
+│   │   ├── ME:8080 ──POST──> DevOps:8081/pipeline/trigger (startup once)
+│   │   ├── ME:8080 ──GET───> SYNTHEX:8090/v3/thermal (60s, T=0.57, target=0.50)
+│   │   ├── ME:8080 ──GET───> SYNTHEX:8090/v3/diagnostics (60s, cascade health=0.75)
+│   │   ├── ME:8080 ──POST──> SYNTHEX:8090/v3/decay/trigger (scheduled decay)
+│   │   └── ME:8080 ──POST──> TL:8105/api/tools (startup, 15 tools)
+│   │
+│   ├── INBOUND BRIDGES (services reading ME)
+│   │   ├── ORAC:8133 ──m23_me_bridge──> ME:8080/api/health (fitness=0.61, 10s)
+│   │   └── ORAC:8133 ──m23_me_bridge──> ME:8080/api/observer (subscribed=true)
+│   │
+│   ├── SYNTHEX WIRING (bidirectional thermal coupling)
+│   │   ├── ME ──thermal_poll──> SYNTHEX:8090/v3/thermal (reads PID state)
+│   │   ├── ME ──cascade_poll──> SYNTHEX:8090/v3/diagnostics (reads cascade)
+│   │   ├── ME ──decay_trigger─> SYNTHEX:8090/v3/decay/trigger (writes)
+│   │   ├── ORAC ──m22_synthex_bridge──> SYNTHEX:8090 (Hebbian writeback)
+│   │   ├── SYNTHEX ──sync──> K7:8100 (synergy=92.0)
+│   │   ├── SYNTHEX ──sync──> TL:8105 (synergy=90.0)
+│   │   └── SYNTHEX ──sync──> NAIS:8101 (synergy=88.5)
+│   │
+│   ├── ORAC WIRING (6 hooks + bridge)
+│   │   ├── ME ──orac-hook.sh──> ORAC:8133/hooks/SessionStart (5s)
+│   │   ├── ME ──orac-hook.sh──> ORAC:8133/hooks/UserPromptSubmit (3s)
+│   │   ├── ME ──orac-hook.sh──> ORAC:8133/hooks/PreToolUse (2s)
+│   │   ├── ME ──orac-hook.sh──> ORAC:8133/hooks/PostToolUse (3s)
+│   │   ├── ME ──orac-hook.sh──> ORAC:8133/hooks/Stop (5s)
+│   │   └── ME ──orac-hook.sh──> ORAC:8133/hooks/PermissionRequest (2s)
+│   │
+│   ├── PV2 WIRING (field + bus)
+│   │   ├── ME ──EventBus bridge──> PV2:8132/bus/events (10s, 6 channels)
+│   │   ├── ME ──health poll──> PV2:8132/health (r, spheres, K, tick)
+│   │   ├── PV2 bus subscribers: 1 (ME EventBus bridge)
+│   │   └── PV2 bus events: 1000 (ring buffer)
+│   │
+│   ├── MEMORY SUBSTRATE WIRING
+│   │   ├── POVM:8125 ──POST /memories──> crystallize session state
+│   │   ├── POVM:8125 ──GET /hydrate──> restore on startup
+│   │   ├── RM:8130 ──POST /put (TSV!)──> persist integration records
+│   │   ├── RM:8130 ──GET /search?q=──> search cross-session memory
+│   │   ├── PV2:8132 ──POST /sphere/*/register──> sphere lifecycle
+│   │   └── SQLite (12 DBs) ──direct I/O──> all layers read/write
+│   │
+│   ├── PLANNED V2 WIRING (M48-M57 + L8)
+│   │   ├── M53 OracBridge ──> ORAC:8133/health + /blackboard (bidirectional)
+│   │   ├── M53 OracBridge ──> ORAC:8133/hooks/PostToolUse (push ME events)
+│   │   ├── N01 FieldBridge ──> PV2:8132/health (Kuramoto r pre/post capture)
+│   │   ├── N04 StdpBridge ──> VMS:8120/api/query (STDP from VMS patterns)
+│   │   ├── M51 Auth ──> all outbound calls (token injection)
+│   │   └── M52 RateLimit ──> all inbound calls (tier-based throttling)
+│   │
+│   └── SYNERGY SCORES (from system_synergy.db)
+│       ├── ME → devenv: 95.0 (request_reply)
+│       ├── ME → K7: 88.0 (sync)
+│       ├── ME → NAIS: 86.0 (sync)
+│       ├── ME → SYNTHEX: 85.0 (sync)
+│       ├── ME → TL: 84.0 (sync)
+│       ├── K7 → NAIS: 95.0 (sync)
+│       ├── SYNTHEX → K7: 92.0 (sync)
+│       ├── K7 → CSV7: 91.0 (sync)
+│       └── SYNTHEX → TL: 90.0 (sync)
+│
 └── NEXT STEPS
     ├── Phase 7: Implement L8 Nexus (N01-N06) — ~6,000 LOC, 300 tests
     ├── Phase 8: engine.rs V2 orchestrator + main.rs V2 routes
