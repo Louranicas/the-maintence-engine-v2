@@ -114,6 +114,19 @@ The Maintenance Engine comprises 57 modules organized into 7 layers (47 deployed
 
 ---
 
+## Layer 8: Nexus Integration (N01-N06) — NEW in V2
+
+| Module | Name | File | Status |
+|--------|------|------|--------|
+| N01 | Field Bridge | [N01_FIELD_BRIDGE.md](N01_FIELD_BRIDGE.md) | STUB |
+| N02 | Intent Router | [N02_INTENT_ROUTER.md](N02_INTENT_ROUTER.md) | STUB |
+| N03 | Regime Manager | [N03_REGIME_MANAGER.md](N03_REGIME_MANAGER.md) | STUB |
+| N04 | STDP Bridge | [N04_STDP_BRIDGE.md](N04_STDP_BRIDGE.md) | STUB |
+| N05 | Evolution Gate | [N05_EVOLUTION_GATE.md](N05_EVOLUTION_GATE.md) | STUB |
+| N06 | Morphogenic Adapter | [N06_MORPHOGENIC_ADAPTER.md](N06_MORPHOGENIC_ADAPTER.md) | STUB |
+
+---
+
 ## Cross-Cutting Infrastructure (M41-M43, M46-M47)
 
 | Module | Name | Layer | File | Status |
@@ -164,7 +177,8 @@ src/
 ├── m4_integration/    # M19-M24, M42, M46-M47 (9 deployed) + M51-M53 planned
 ├── m5_learning/       # M25-M30, M41 (7 deployed) + M54-M55 planned
 ├── m6_consensus/      # M31-M36 (6 deployed) + M56-M57 planned
-└── m7_observer/       # M37-M40, M44-M45 (6 deployed)
+├── m7_observer/       # M37-M40, M44-M45 (6 deployed)
+└── nexus/             # N01-N06 (6 stubs — NEW in V2)
 ```
 
 ---
