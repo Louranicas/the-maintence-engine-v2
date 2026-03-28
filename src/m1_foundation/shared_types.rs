@@ -151,9 +151,11 @@ impl ModuleId {
     pub const M46: Self = Self("M46");
     /// M47: Tool Registrar
     pub const M47: Self = Self("M47");
+    /// M48: Self Model
+    pub const M48: Self = Self("M48");
 
     /// All known module IDs in order.
-    pub const ALL: [Self; 47] = [
+    pub const ALL: [Self; 48] = [
         Self::M01, Self::M02, Self::M03, Self::M04, Self::M05, Self::M06,
         Self::M07, Self::M08, Self::M09, Self::M10, Self::M11, Self::M12,
         Self::M13, Self::M14, Self::M15, Self::M16, Self::M17, Self::M18,
@@ -161,7 +163,7 @@ impl ModuleId {
         Self::M25, Self::M26, Self::M27, Self::M28, Self::M29, Self::M30,
         Self::M31, Self::M32, Self::M33, Self::M34, Self::M35, Self::M36,
         Self::M37, Self::M38, Self::M39, Self::M40, Self::M41, Self::M42,
-        Self::M43, Self::M44, Self::M45, Self::M46, Self::M47,
+        Self::M43, Self::M44, Self::M45, Self::M46, Self::M47, Self::M48,
     ];
 
     /// Create a `ModuleId` from a static string.
@@ -207,7 +209,7 @@ impl ModuleId {
     pub fn layer(&self) -> Option<u8> {
         let n = self.number()?;
         match n {
-            1..=6 | 43 => Some(1),   // L1: M01-M06 + M43 (NAM Utilities)
+            1..=6 | 43 | 48 => Some(1), // L1: M01-M06 + M43 (NAM Utilities) + M48 (Self Model)
             7..=12 => Some(2),        // L2: M07-M12
             13..=18 => Some(3),       // L3: M13-M18
             19..=24 | 46 | 47 => Some(4), // L4: M19-M24 + M46 (Peer Bridge) + M47 (Tool Registrar)
@@ -719,7 +721,7 @@ mod tests {
 
     #[test]
     fn test_module_id_all_count() {
-        assert_eq!(ModuleId::ALL.len(), 47);
+        assert_eq!(ModuleId::ALL.len(), 48);
     }
 
     #[test]

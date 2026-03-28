@@ -58,6 +58,7 @@ pub mod shared_types;
 pub mod signals;
 pub mod state;
 pub mod tensor_registry;
+pub mod self_model;
 
 // Re-export NAM foundation primitives
 pub use nam::{
@@ -116,6 +117,13 @@ pub use signals::{
 pub use tensor_registry::{
     ComposedTensor, ContributedTensor, ContributorInventoryEntry, ContributorKind,
     TensorContributor, TensorDimension, TensorRegistry,
+};
+
+// Re-export self-model types (M48: Self Model)
+pub use self_model::{
+    ArchitectureDescriptor, CapabilityEntry, CapabilityStatus, CapabilitySummary,
+    LayerStatusEntry, RuntimeSnapshot, SelfModel, SelfModelConfig, SelfModelConfigBuilder,
+    SelfModelHealth, SelfModelProvider,
 };
 
 // ============================================================================
