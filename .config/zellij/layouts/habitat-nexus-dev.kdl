@@ -1,0 +1,25 @@
+// habitat-nexus-dev.kdl
+// Hot-reload development layout for habitat-nexus plugin
+// Usage: zellij --layout ~/.config/zellij/layouts/habitat-nexus-dev.kdl
+layout {
+  pane size=1 borderless=true {
+    plugin location="zellij:tab-bar"
+  }
+  pane split_direction="vertical" {
+    pane split_direction="horizontal" size="70%" {
+      pane edit="src/main.rs" name="main.rs"
+      pane edit="src/protocol.rs" name="protocol.rs"
+    }
+    pane split_direction="horizontal" size="30%" {
+      pane command="bash" name="build+reload" {
+        args "-c" "cd habitat-nexus && cargo build --target wasm32-wasip1 2>&1 && zellij action start-or-reload-plugin file:target/wasm32-wasip1/debug/habitat_nexus.wasm && echo 'RELOADED'"
+      }
+      pane {
+        plugin location="file:habitat-nexus/target/wasm32-wasip1/debug/habitat_nexus.wasm"
+      }
+    }
+  }
+  pane size=2 borderless=true {
+    plugin location="zellij:status-bar"
+  }
+}
