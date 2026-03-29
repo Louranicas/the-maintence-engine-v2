@@ -22,6 +22,9 @@
 | **Meta Tree Mind Map** | [`ai_docs/META_TREE_MIND_MAP_V2.md`](ai_docs/META_TREE_MIND_MAP_V2.md) | Full architecture tree + wiring |
 | **Evolution Chamber V2** | [`ai_docs/ADVANCED_EVOLUTION_CHAMBER_V2.md`](ai_docs/ADVANCED_EVOLUTION_CHAMBER_V2.md) | RALPH redesign from live data |
 | **Habitat Integration** | [`ai_specs/HABITAT_INTEGRATION_SPEC.md`](ai_specs/HABITAT_INTEGRATION_SPEC.md) | Full wiring map + schematics |
+| **Recommendations (21)** | [`ai_docs/SESSION_068_RECOMMENDATIONS.md`](ai_docs/SESSION_068_RECOMMENDATIONS.md) | Prioritized fixes from stress testing |
+| **Architecture Schematics** | [`ai_docs/schematics/ME_V2_ARCHITECTURE_SCHEMATICS.md`](ai_docs/schematics/ME_V2_ARCHITECTURE_SCHEMATICS.md) | 8 Mermaid diagrams |
+| **Diagnostic Schematics** | [`ai_docs/schematics/ME_V2_DIAGNOSTIC_SCHEMATICS.md`](ai_docs/schematics/ME_V2_DIAGNOSTIC_SCHEMATICS.md) | Diagnostic trees + tuning reference |
 | **AI Docs Index** | [`ai_docs/INDEX.md`](ai_docs/INDEX.md) | Documentation hub |
 | **AI Specs Index** | [`ai_specs/INDEX.md`](ai_specs/INDEX.md) | Specifications hub |
 | **Module Index** | [`ai_docs/modules/INDEX.md`](ai_docs/modules/INDEX.md) | 55 module docs (48 M + 6 N + INDEX) |

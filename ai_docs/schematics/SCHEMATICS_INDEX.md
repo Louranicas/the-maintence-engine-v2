@@ -13,6 +13,12 @@
 | `tensor_contribution.mmd` | 12D tensor dimension ownership across modules | `npx mmdc -i tensor_contribution.mmd -o tensor_contribution.png` |
 | `database_topology.mmd` | 12 database relationships and data flow | `npx mmdc -i database_topology.mmd -o database_topology.png` |
 
+## Diagnostic Reference
+
+| File | Description |
+|------|-------------|
+| `ME_V2_DIAGNOSTIC_SCHEMATICS.md` | God-tier diagnostic and tuning reference — 16 sections covering fitness trees, metabolic health, observer pipeline, EventBus channels, RALPH evolution, lock ordering, wiring gaps, tensor dimensions, service mesh, cross-service data flow, background tasks, databases, escalation, STDP learning, thermal subsystem, and tuning knobs |
+
 ## Rendering
 
 ```bash
