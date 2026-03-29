@@ -120,6 +120,39 @@ pub struct MutationEntry {
     pub timestamp: String,
 }
 
+/// R19 Phase 2: V2 mutation entry with mandatory fields (no NULLs on critical data).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MutationEntryV2 {
+    /// Unique mutation identifier.
+    pub mutation_id: String,
+    /// Parameter name (NEVER empty).
+    pub parameter: String,
+    /// Original value (NEVER null).
+    pub old_value: f64,
+    /// Mutated value (NEVER null).
+    pub new_value: f64,
+    /// Fitness before mutation (NEVER null).
+    pub fitness_before: f64,
+    /// Fitness after verification (None until resolved).
+    pub fitness_after: Option<f64>,
+    /// Kuramoto r before mutation.
+    pub r_before: f64,
+    /// Kuramoto r after verification.
+    pub r_after: Option<f64>,
+    /// Evolution strategy that produced this mutation.
+    pub strategy: String,
+    /// Hint source (Emergence/Dimension/Pathway/Structural), if any.
+    pub hint_source: Option<String>,
+    /// Parameter suggested by hint, if any.
+    pub hint_parameter: Option<String>,
+    /// Current status (Proposed/Verifying/Accepted/`RolledBack`/`GateRejected`).
+    pub status: String,
+    /// Gate decision (Accept/Reject/`DeferToConsensus`), if gated.
+    pub gate_decision: Option<String>,
+    /// Generation number.
+    pub generation: u64,
+}
+
 /// A log-correlator link between events.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CorrelationEntry {
@@ -354,6 +387,101 @@ impl DatabaseManager {
             pool,
             "INSERT INTO mutation_log (data, created_at) VALUES (?, datetime('now'))",
             &[&json],
+        )
+        .await
+    }
+
+    /// R19 Phase 2: Write a V2 mutation record with mandatory fields.
+    ///
+    /// Unlike V1's `write_mutation` which stores opaque JSON, V2 uses typed
+    /// columns with NOT NULL constraints on critical fields.
+    pub async fn write_mutation_v2(&self, entry: &MutationEntryV2) -> Result<u64> {
+        let pool = self.persistence.pool(DatabaseType::EvolutionTracking)?;
+        execute(
+            pool,
+            "INSERT OR REPLACE INTO mutation_log_v2 \
+                (mutation_id, parameter, old_value, new_value, fitness_before, \
+                 fitness_after, r_before, r_after, strategy, hint_source, \
+                 hint_parameter, status, gate_decision, generation) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            &[
+                &entry.mutation_id,
+                &entry.parameter,
+                &entry.old_value.to_string(),
+                &entry.new_value.to_string(),
+                &entry.fitness_before.to_string(),
+                &entry.fitness_after.map_or_else(String::new, |v| v.to_string()),
+                &entry.r_before.to_string(),
+                &entry.r_after.map_or_else(String::new, |v| v.to_string()),
+                &entry.strategy,
+                &entry.hint_source.clone().unwrap_or_default(),
+                &entry.hint_parameter.clone().unwrap_or_default(),
+                &entry.status,
+                &entry.gate_decision.clone().unwrap_or_default(),
+                &entry.generation.to_string(),
+            ],
+        )
+        .await
+    }
+
+    /// R19 Phase 2: Update strategy effectiveness after mutation outcome.
+    #[allow(clippy::unnecessary_to_owned)]
+    pub async fn update_strategy_effectiveness(
+        &self,
+        strategy: &str,
+        accepted: bool,
+        rolled_back: bool,
+        fitness_delta: f64,
+    ) -> Result<u64> {
+        let pool = self.persistence.pool(DatabaseType::EvolutionTracking)?;
+        let (acc_inc, rb_inc) = (
+            if accepted { "1" } else { "0" },
+            if rolled_back { "1" } else { "0" },
+        );
+        let delta_str = fitness_delta.to_string();
+        execute(
+            pool,
+            &format!(
+                "INSERT INTO strategy_effectiveness (strategy, total_proposed, total_accepted, \
+                 total_rolled_back, avg_fitness_delta, last_used_at) \
+                 VALUES (?, 1, {acc_inc}, {rb_inc}, ?, datetime('now')) \
+                 ON CONFLICT(strategy) DO UPDATE SET \
+                 total_proposed = total_proposed + 1, \
+                 total_accepted = total_accepted + {acc_inc}, \
+                 total_rolled_back = total_rolled_back + {rb_inc}, \
+                 avg_fitness_delta = (avg_fitness_delta * total_proposed + ?) / (total_proposed + 1), \
+                 last_used_at = datetime('now')"
+            ),
+            &[strategy, &delta_str, &delta_str],
+        )
+        .await
+    }
+
+    /// R19 Phase 2: Update hint source accuracy after mutation outcome.
+    pub async fn update_hint_accuracy(
+        &self,
+        source: &str,
+        parameter: &str,
+        accepted: bool,
+        fitness_improvement: f64,
+    ) -> Result<u64> {
+        let pool = self.persistence.pool(DatabaseType::EvolutionTracking)?;
+        let acc_inc = if accepted { "1" } else { "0" };
+        let rb_inc = if accepted { "0" } else { "1" };
+        let imp_str = fitness_improvement.to_string();
+        execute(
+            pool,
+            &format!(
+                "INSERT INTO hint_accuracy (source, parameter, times_suggested, \
+                 times_accepted, times_rolled_back, avg_fitness_improvement) \
+                 VALUES (?, ?, 1, {acc_inc}, {rb_inc}, ?) \
+                 ON CONFLICT(source, parameter) DO UPDATE SET \
+                 times_suggested = times_suggested + 1, \
+                 times_accepted = times_accepted + {acc_inc}, \
+                 times_rolled_back = times_rolled_back + {rb_inc}, \
+                 avg_fitness_improvement = (avg_fitness_improvement * times_suggested + ?) / (times_suggested + 1)"
+            ),
+            &[source, parameter, &imp_str, &imp_str],
         )
         .await
     }
@@ -619,6 +747,7 @@ impl DatabaseManager {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)] // R19 Phase 2 added 3 V2 tables + 3 indexes
     async fn create_evolution_tables(&self) -> Result<()> {
         let pool = self.persistence.pool(DatabaseType::EvolutionTracking)?;
 
@@ -674,6 +803,87 @@ impl DatabaseManager {
                 data TEXT NOT NULL, \
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))\
             )",
+            &[],
+        )
+        .await?;
+
+        // R19 Phase 2: V2 enhanced mutation log (fixes NULL-field problem).
+        // All critical fields are NOT NULL — no blind mutations.
+        execute(
+            pool,
+            "CREATE TABLE IF NOT EXISTS mutation_log_v2 (\
+                id INTEGER PRIMARY KEY AUTOINCREMENT, \
+                mutation_id TEXT NOT NULL UNIQUE, \
+                parameter TEXT NOT NULL, \
+                old_value REAL NOT NULL, \
+                new_value REAL NOT NULL, \
+                fitness_before REAL NOT NULL, \
+                fitness_after REAL, \
+                r_before REAL NOT NULL DEFAULT 0.0, \
+                r_after REAL, \
+                strategy TEXT NOT NULL, \
+                hint_source TEXT, \
+                hint_parameter TEXT, \
+                status TEXT NOT NULL, \
+                gate_decision TEXT, \
+                proposed_at TEXT NOT NULL DEFAULT (datetime('now')), \
+                resolved_at TEXT, \
+                generation INTEGER NOT NULL\
+            )",
+            &[],
+        )
+        .await?;
+
+        // R19 Phase 2: Per-strategy effectiveness tracking.
+        execute(
+            pool,
+            "CREATE TABLE IF NOT EXISTS strategy_effectiveness (\
+                id INTEGER PRIMARY KEY AUTOINCREMENT, \
+                strategy TEXT NOT NULL UNIQUE, \
+                total_proposed INTEGER NOT NULL DEFAULT 0, \
+                total_accepted INTEGER NOT NULL DEFAULT 0, \
+                total_rolled_back INTEGER NOT NULL DEFAULT 0, \
+                total_gate_rejected INTEGER NOT NULL DEFAULT 0, \
+                avg_fitness_delta REAL NOT NULL DEFAULT 0.0, \
+                last_used_at TEXT NOT NULL DEFAULT (datetime('now'))\
+            )",
+            &[],
+        )
+        .await?;
+
+        // R19 Phase 2: Per-source hint accuracy tracking.
+        execute(
+            pool,
+            "CREATE TABLE IF NOT EXISTS hint_accuracy (\
+                id INTEGER PRIMARY KEY AUTOINCREMENT, \
+                source TEXT NOT NULL, \
+                parameter TEXT NOT NULL, \
+                times_suggested INTEGER NOT NULL DEFAULT 0, \
+                times_accepted INTEGER NOT NULL DEFAULT 0, \
+                times_rolled_back INTEGER NOT NULL DEFAULT 0, \
+                avg_fitness_improvement REAL NOT NULL DEFAULT 0.0, \
+                UNIQUE(source, parameter)\
+            )",
+            &[],
+        )
+        .await?;
+
+        // R19 Phase 2: Indexes for V2 tables.
+        execute(
+            pool,
+            "CREATE INDEX IF NOT EXISTS idx_mutation_v2_status ON mutation_log_v2(status)",
+            &[],
+        )
+        .await?;
+        execute(
+            pool,
+            "CREATE INDEX IF NOT EXISTS idx_mutation_v2_strategy ON mutation_log_v2(strategy)",
+            &[],
+        )
+        .await?;
+        execute(
+            pool,
+            "CREATE INDEX IF NOT EXISTS idx_mutation_v2_gen ON mutation_log_v2(generation)",
             &[],
         )
         .await?;

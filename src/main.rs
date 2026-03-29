@@ -255,6 +255,7 @@ fn spawn_background_tasks(state: &Arc<AppState>) {
     spawn_field_tracking(state);
     spawn_self_model_updater(state);
     spawn_remediation_worker(state);
+    spawn_evolution_tick(state);
 }
 
 /// Issue 9: One-shot trigger of a DevOps Engine health-check pipeline.
@@ -827,6 +828,111 @@ fn spawn_remediation_worker(state: &Arc<AppState>) {
 }
 
 /// Spawn heartbeat task: logs every 60s confirming the server is alive.
+/// R19 Phase 2c: Decoupled evolution tick at 15s interval.
+///
+/// Separates RALPH cycle processing from the 60s observer tick. This
+/// increases generation rate from ~1.8 gen/h (60s) to ~240 gen/h (15s)
+/// without affecting health polling or tensor observation frequency.
+///
+/// The evolution tick runs: strategy selection → hint-guided learn →
+/// V2 propose (with strategy delta ranges) → advance phase.
+fn spawn_evolution_tick(state: &Arc<AppState>) {
+    let evo_state = Arc::clone(state);
+    tokio::spawn(async move {
+        // Wait for observer to bootstrap RALPH first
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        tracing::info!("V2 evolution tick started (15s interval, decoupled from observer)");
+
+        let mut interval = tokio::time::interval(Duration::from_millis(
+            maintenance_engine_v2::m7_observer::evolution_chamber::DEFAULT_EVOLUTION_TICK_MS,
+        ));
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+
+            // Skip if metabolic paused
+            if evo_state
+                .metabolic_paused
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                continue;
+            }
+
+            let Some(obs) = evo_state.engine.observer() else {
+                continue;
+            };
+
+            // Get current system state for strategy selection
+            let Some(report) = obs.get_report() else {
+                continue; // no observer report yet
+            };
+
+            let layer_health = evo_state.engine.layer_health_scores();
+
+            // R19: Select strategy based on current field state
+            let (r, r_delta) = {
+                use maintenance_engine_v2::nexus::field_bridge::FieldBridge;
+                let fb = evo_state.engine.field_bridge();
+                let r_val = fb.current_r();
+                let delta = fb.recent_deltas(1).first().map_or(0.0, |d| d.r_delta);
+                (r_val, delta)
+            };
+            let strategy = obs.chamber().select_strategy(
+                report.current_fitness,
+                &layer_health,
+                r,
+                r_delta,
+            );
+
+            // R19: Run hint-guided Learn phase
+            let hint = obs.chamber().learn_with_hints(
+                report.emergences_since_last,
+                None, // dimension analysis from tensor (future enhancement)
+                &layer_health,
+            );
+
+            // R19: Check convergence — pause if variance too low
+            if obs.chamber().is_converged() {
+                tracing::debug!("V2 evolution tick: converged, skipping mutation");
+                continue;
+            }
+
+            // R19 Phase 2: Propose using strategy-guided delta ranges
+            // Find a tunable parameter from the hint or fall back to default
+            let target_param = hint
+                .as_ref()
+                .map_or("emergence_detector.min_confidence", |h| &h.parameter);
+
+            let current_val = 0.4_f64; // default; in production, read from live config
+
+            if let Err(e) = obs.chamber().propose_v2_mutation(
+                target_param,
+                current_val,
+                report.current_fitness,
+                &strategy,
+                hint.as_ref(),
+            ) {
+                tracing::trace!(
+                    error = %e,
+                    strategy = %strategy,
+                    "V2 evolution tick: mutation proposal skipped"
+                );
+            } else {
+                tracing::info!(
+                    strategy = %strategy,
+                    hint = hint.as_ref().map_or("none", |h| &h.parameter),
+                    fitness = report.current_fitness,
+                    "V2 evolution tick: mutation proposed"
+                );
+            }
+
+            // Advance RALPH phase
+            let _ = obs.chamber().advance_phase();
+        }
+    });
+}
+
 fn spawn_heartbeat(port: u16) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));

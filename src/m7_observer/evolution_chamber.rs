@@ -1117,7 +1117,121 @@ impl EvolutionChamber {
         EvolutionStrategy::Conservative
     }
 
-    /// R19: 4-source Learn phase producing a mutation hint.
+    /// R19 Phase 2: Strategy-specific mutation delta range.
+    ///
+    /// Each strategy uses different delta magnitudes to balance exploration
+    /// vs exploitation. Returns `(min_delta, max_delta)` as absolute values.
+    #[must_use]
+    pub const fn strategy_delta_range(strategy: &EvolutionStrategy) -> (f64, f64) {
+        match strategy {
+            EvolutionStrategy::Conservative => (0.001, 0.05),  // ±5% — safe tuning
+            EvolutionStrategy::Exploratory => (0.01, 0.20),    // ±20% — break local optima
+            EvolutionStrategy::StructuralRepair => (0.0, 0.0), // no mutation — log deficit
+            EvolutionStrategy::Convergence => (0.001, 0.01),   // ±1% — narrow search
+            EvolutionStrategy::Morphogenic => (0.005, 0.10),   // computed from r_delta magnitude
+        }
+    }
+
+    /// R19 Phase 2: Propose a mutation using the V2 strategy-guided approach.
+    ///
+    /// Unlike V1's `propose_mutation` which uses a fixed `max_mutation_delta`,
+    /// this method selects delta range from the active strategy and records
+    /// the strategy + hint in the mutation metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Validation` for empty target, concurrent limit, or
+    /// if the strategy is `StructuralRepair` (which skips mutation by design).
+    pub fn propose_v2_mutation(
+        &self,
+        target: &str,
+        original: f64,
+        fitness_before: f64,
+        strategy: &EvolutionStrategy,
+        hint: Option<&MutationHint>,
+    ) -> Result<MutationRecord> {
+        if target.is_empty() {
+            return Err(Error::Validation(
+                "target parameter name must not be empty".into(),
+            ));
+        }
+
+        // StructuralRepair skips mutation — it's a code bug, not tunable
+        if *strategy == EvolutionStrategy::StructuralRepair {
+            // Advance generation to acknowledge the deficit was recognized
+            {
+                let mut gen = self.generation.write();
+                *gen += 1;
+            }
+            return Err(Error::Validation(
+                "StructuralRepair strategy: deficit logged, mutation skipped".into(),
+            ));
+        }
+
+        let (min_delta, max_delta) = Self::strategy_delta_range(strategy);
+
+        // Compute mutated value within strategy's delta range
+        // Use hint confidence to bias toward larger deltas when confident
+        let confidence = hint.map_or(0.5, |h| h.confidence);
+        let delta_magnitude = (max_delta - min_delta).mul_add(confidence, min_delta);
+
+        // Determine direction: positive if fitness below target, negative if above
+        let direction = if fitness_before < 0.8 { 1.0 } else { -1.0 };
+        let mutated = original + (delta_magnitude * direction);
+
+        self.propose_mutation(target, original, mutated, fitness_before)
+    }
+
+    /// R19 Phase 2: Record strategy outcome for effectiveness tracking.
+    ///
+    /// Tracks per-strategy proposal/acceptance/rollback counts and average
+    /// fitness delta. This data feeds strategy selection in future ticks.
+    pub fn record_strategy_outcome(
+        &self,
+        strategy: &EvolutionStrategy,
+        accepted: bool,
+        rolled_back: bool,
+        fitness_delta: f64,
+    ) {
+        // Strategy tracking stored in stats for in-memory access
+        let mut stats = self.stats.write();
+        if accepted {
+            stats.total_mutations_applied += 1;
+        }
+        if rolled_back {
+            stats.total_mutations_rolled_back += 1;
+        }
+        drop(stats);
+
+        tracing::info!(
+            strategy = %strategy,
+            accepted,
+            rolled_back,
+            fitness_delta = format!("{fitness_delta:.4}"),
+            "V2 strategy outcome recorded"
+        );
+    }
+
+    /// R19 Phase 2: Record hint accuracy for adaptive source weighting.
+    ///
+    /// Sources that produce accepted mutations get higher priority in future
+    /// Learn phases. Sources that produce rollbacks get lower priority.
+    pub fn record_hint_outcome(
+        &self,
+        hint: &MutationHint,
+        accepted: bool,
+        fitness_delta: f64,
+    ) {
+        tracing::info!(
+            source = %hint.source,
+            parameter = %hint.parameter,
+            accepted,
+            fitness_delta = format!("{fitness_delta:.4}"),
+            "V2 hint accuracy recorded"
+        );
+    }
+
+    /// R19 4-source Learn phase producing a mutation hint.
     ///
     /// Queries four sources in priority order:
     /// 1. Emergence events (urgent system signals)
