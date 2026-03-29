@@ -61,6 +61,116 @@ const DEFAULT_MIN_GENERATION_INTERVAL_MS: u64 = 60_000;
 /// Default maximum mutation delta magnitude.
 const DEFAULT_MAX_MUTATION_DELTA: f64 = 0.20;
 
+/// Default evolution tick interval in milliseconds (15s for V2, was 60s in V1).
+/// Used by the observer tick configuration to set V2's faster iteration rate.
+pub const DEFAULT_EVOLUTION_TICK_MS: u64 = 15_000;
+
+/// Convergence detection: pause when fitness variance below this for 50 gens.
+const CONVERGENCE_VARIANCE_THRESHOLD: f64 = 0.001;
+
+/// Convergence detection: number of generations to check.
+const CONVERGENCE_WINDOW: usize = 50;
+
+// ---------------------------------------------------------------------------
+// V2 Enhanced Enums
+// ---------------------------------------------------------------------------
+
+/// R19: Evolution strategy selection based on system state.
+///
+/// The chamber selects a strategy each tick based on fitness trajectory,
+/// layer health, and field coherence. This replaces V1's single-mode
+/// mutation approach with adaptive multi-strategy evolution.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum EvolutionStrategy {
+    /// Single parameter, conservative delta (fitness > 0.7, stable)
+    Conservative,
+    /// Multi-parameter, larger delta, higher rollback tolerance (fitness < 0.5)
+    Exploratory,
+    /// Target known structural deficits (layer health < 0.5)
+    StructuralRepair,
+    /// Narrow search around current optimum (fitness > 0.8, variance < 0.01)
+    Convergence,
+    /// Field-driven adaptation (`|r_delta|` > 0.05)
+    Morphogenic,
+}
+
+impl std::fmt::Display for EvolutionStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Conservative => f.write_str("Conservative"),
+            Self::Exploratory => f.write_str("Exploratory"),
+            Self::StructuralRepair => f.write_str("StructuralRepair"),
+            Self::Convergence => f.write_str("Convergence"),
+            Self::Morphogenic => f.write_str("Morphogenic"),
+        }
+    }
+}
+
+/// R19: Source of a mutation hint from the 4-source Learn phase.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum HintSource {
+    /// Source 1: Urgent system event (emergence detection)
+    Emergence(String),
+    /// Source 2: Weakest fitness dimension (tensor analysis)
+    DimensionAnalysis(String),
+    /// Source 3: Historical correlation pathway
+    EstablishedPathway(String),
+    /// Source 4 (NEW): Code bug, not tunable — layer health < 0.5
+    StructuralDeficit(String),
+}
+
+impl std::fmt::Display for HintSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Emergence(s) => write!(f, "emergence:{s}"),
+            Self::DimensionAnalysis(s) => write!(f, "dimension:{s}"),
+            Self::EstablishedPathway(s) => write!(f, "pathway:{s}"),
+            Self::StructuralDeficit(s) => write!(f, "structural:{s}"),
+        }
+    }
+}
+
+/// R19: Hint from the Learn phase guiding mutation selection.
+///
+/// Instead of blind round-robin parameter selection (V1), hints
+/// direct the Propose phase toward parameters that address actual
+/// observed problems.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MutationHint {
+    /// Parameter name to target.
+    pub parameter: String,
+    /// Which Learn source generated this hint.
+    pub source: HintSource,
+    /// Confidence in this hint (0.0-1.0).
+    pub confidence: f64,
+    /// Human-readable reason for the hint.
+    pub reason: String,
+}
+
+/// R19: Gate decision from N05 Evolution Gate.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum GateDecision {
+    /// Mutation passed field coherence test.
+    Accept {
+        /// Field r after shadow test.
+        r_after: f64,
+        /// Confidence in acceptance.
+        confidence: f64,
+    },
+    /// Mutation failed field coherence test.
+    Reject {
+        /// Reason for rejection.
+        reason: String,
+        /// r delta observed during test.
+        r_delta: f64,
+    },
+    /// Escalate to PBFT consensus for fleet-wide decision.
+    DeferToConsensus {
+        /// PBFT proposal ID.
+        proposal_id: String,
+    },
+}
+
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
@@ -944,6 +1054,250 @@ impl EvolutionChamber {
     #[must_use]
     pub const fn config(&self) -> &EvolutionChamberConfig {
         &self.config
+    }
+
+    // ----- V2 Enhanced Methods (R19) -----
+
+    /// R19: Select evolution strategy based on current system state.
+    ///
+    /// Examines fitness level, trajectory, layer health, and field
+    /// coherence to choose the most appropriate mutation strategy.
+    #[must_use]
+    pub fn select_strategy(
+        &self,
+        fitness: f64,
+        layer_health: &[f64],
+        _r: f64,
+        r_delta: f64,
+    ) -> EvolutionStrategy {
+        // Morphogenic: field-driven adaptation takes priority
+        if r_delta.abs() > 0.05 {
+            return EvolutionStrategy::Morphogenic;
+        }
+
+        // Structural repair: any layer below 0.5 indicates a code bug
+        if layer_health.iter().skip(1).any(|&h| h < 0.5) {
+            return EvolutionStrategy::StructuralRepair;
+        }
+
+        // Convergence: high fitness + low variance = narrow search
+        if fitness > 0.8 {
+            // Collect fitness values under lock, then drop lock before computation
+            let recent: Vec<f64> = {
+                let snaps = self.fitness_snapshots.read();
+                if snaps.len() >= CONVERGENCE_WINDOW {
+                    snaps
+                        .iter()
+                        .rev()
+                        .take(CONVERGENCE_WINDOW)
+                        .map(|s| s.fitness)
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            };
+            if !recent.is_empty() {
+                #[allow(clippy::cast_precision_loss)]
+                let count = recent.len() as f64;
+                let mean = recent.iter().sum::<f64>() / count;
+                let variance =
+                    recent.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / count;
+                if variance < CONVERGENCE_VARIANCE_THRESHOLD {
+                    return EvolutionStrategy::Convergence;
+                }
+            }
+        }
+
+        // Exploratory: low fitness needs aggressive exploration
+        if fitness < 0.5 {
+            return EvolutionStrategy::Exploratory;
+        }
+
+        // Default: conservative single-parameter tuning
+        EvolutionStrategy::Conservative
+    }
+
+    /// R19: 4-source Learn phase producing a mutation hint.
+    ///
+    /// Queries four sources in priority order:
+    /// 1. Emergence events (urgent system signals)
+    /// 2. Dimension analysis (weakest fitness tensor dimension)
+    /// 3. Established pathways (historical correlations)
+    /// 4. Structural deficit (layer health below 0.5)
+    ///
+    /// Returns `None` if no source produces a hint.
+    #[must_use]
+    pub fn learn_with_hints(
+        &self,
+        emergence_count: u64,
+        weakest_dimension: Option<(usize, f64)>,
+        layer_health: &[f64],
+    ) -> Option<MutationHint> {
+        // Source 1: Emergence events
+        if emergence_count > 100 {
+            return Some(MutationHint {
+                parameter: "emergence_detector.min_confidence".to_string(),
+                source: HintSource::Emergence(format!("{emergence_count} events")),
+                confidence: 0.8,
+                reason: format!("High emergence count ({emergence_count}) suggests detection threshold too sensitive"),
+            });
+        }
+
+        // Source 2: Weakest fitness dimension
+        if let Some((dim_idx, dim_val)) = weakest_dimension {
+            if dim_val < 0.3 {
+                let param = match dim_idx {
+                    6 => "health_monitor.poll_interval_ms",
+                    9 => "circuit_breaker.latency_threshold_ms",
+                    10 => "service_registry.max_error_rate",
+                    _ => "emergence_detector.min_confidence",
+                };
+                return Some(MutationHint {
+                    parameter: param.to_string(),
+                    source: HintSource::DimensionAnalysis(format!("D{dim_idx}={dim_val:.3}")),
+                    confidence: 0.7,
+                    reason: format!("Dimension D{dim_idx} at {dim_val:.3} is the weakest tensor component"),
+                });
+            }
+        }
+
+        // Source 3: Established pathway (use mutation success rate as proxy)
+        let history = self.mutation_history.read();
+        let recent_successes: Vec<_> = history
+            .iter()
+            .rev()
+            .take(10)
+            .filter(|m| !m.rolled_back && m.applied)
+            .collect();
+        if let Some(best) = recent_successes.first() {
+            return Some(MutationHint {
+                parameter: best.target_parameter.clone(),
+                source: HintSource::EstablishedPathway(format!(
+                    "successful mutation gen {}",
+                    best.generation
+                )),
+                confidence: 0.6,
+                reason: format!(
+                    "Parameter '{}' was successfully mutated in generation {}",
+                    best.target_parameter, best.generation
+                ),
+            });
+        }
+        drop(history);
+
+        // Source 4: Structural deficit
+        for (idx, &score) in layer_health.iter().enumerate().skip(1) {
+            if score < 0.5 {
+                return Some(MutationHint {
+                    parameter: format!("L{}_structural", idx + 1),
+                    source: HintSource::StructuralDeficit(format!(
+                        "L{} health={score:.2}",
+                        idx + 1
+                    )),
+                    confidence: 0.99,
+                    reason: format!(
+                        "Layer {} below 0.5 — structural deficit, not tunable parameter",
+                        idx + 1
+                    ),
+                });
+            }
+        }
+
+        None
+    }
+
+    /// R19: Check for convergence (fitness variance below threshold).
+    ///
+    /// Returns `true` if the last `CONVERGENCE_WINDOW` snapshots have
+    /// fitness variance below `CONVERGENCE_VARIANCE_THRESHOLD`, indicating
+    /// the chamber should pause and avoid wasted cycles.
+    #[must_use]
+    pub fn is_converged(&self) -> bool {
+        let snaps = self.fitness_snapshots.read();
+        if snaps.len() < CONVERGENCE_WINDOW {
+            return false;
+        }
+        let recent: Vec<f64> = snaps
+            .iter()
+            .rev()
+            .take(CONVERGENCE_WINDOW)
+            .map(|s| s.fitness)
+            .collect();
+        drop(snaps); // early drop before computation
+        #[allow(clippy::cast_precision_loss)]
+        let count = recent.len() as f64;
+        let mean = recent.iter().sum::<f64>() / count;
+        let variance = recent.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / count;
+        variance < CONVERGENCE_VARIANCE_THRESHOLD
+    }
+
+    /// R19: Record a complete mutation outcome with V2 fields.
+    ///
+    /// Unlike V1 which left `fitness_after` at 0.0 and all hint fields
+    /// as None, V2 mandates recording the full outcome including strategy,
+    /// hint source, and field coherence delta.
+    pub fn record_v2_outcome(
+        &self,
+        mutation_id: &str,
+        fitness_after: f64,
+        strategy: &EvolutionStrategy,
+        hint: Option<&MutationHint>,
+    ) {
+        let mut history = self.mutation_history.write();
+        if let Some(record) = history.iter_mut().find(|m| m.id == mutation_id) {
+            record.fitness_after = fitness_after;
+            // V2: We can't add new fields to the existing MutationRecord struct
+            // without breaking V1 compatibility, so we log the V2 metadata
+            // alongside the record for now. Full V2 MutationRecord migration
+            // will be in a future sprint when the database schema is updated.
+            let hint_str = hint.map_or_else(
+                || "none".to_string(),
+                |h| h.source.to_string(),
+            );
+            tracing::info!(
+                mutation_id,
+                fitness_after,
+                strategy = %strategy,
+                hint_source = hint_str,
+                "V2 mutation outcome recorded"
+            );
+        }
+    }
+
+    /// Verify or rollback a mutation based on current fitness.
+    ///
+    /// Combines V1's separate verify/rollback into a single decision
+    /// point. Used by the RALPH loop in `ralph_process_mutations`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error` if the mutation is not found or in wrong state.
+    pub fn verify_or_rollback(
+        &self,
+        mutation_id: &str,
+        current_fitness: f64,
+    ) -> Result<MutationRecord> {
+        let fitness_at_proposal = {
+            let active = self.active_mutations.read();
+            active
+                .iter()
+                .find(|m| m.id == mutation_id)
+                .map(|m| m.fitness_at_proposal)
+                .ok_or_else(|| {
+                    Error::Validation(format!("active mutation '{mutation_id}' not found"))
+                })?
+        };
+
+        let delta = current_fitness - fitness_at_proposal;
+
+        if self.should_auto_apply(delta) || delta >= 0.0 {
+            self.verify_mutation(mutation_id, current_fitness)
+        } else if self.should_rollback(delta) {
+            self.rollback_mutation(mutation_id)
+        } else {
+            // Marginal delta — verify anyway (V2 is more accepting)
+            self.verify_mutation(mutation_id, current_fitness)
+        }
     }
 }
 

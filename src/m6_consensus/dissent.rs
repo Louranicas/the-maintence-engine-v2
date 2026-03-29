@@ -105,43 +105,21 @@ impl DissentTracker {
             return Err(Error::Validation("Dissent reason cannot be empty".into()));
         }
 
-        let mut events = self
-            .dissent_events
-            .write()
-            .map_err(|e| Error::Other(format!("Lock poisoned: {e}")))?;
+        // R14 fix: Collect all data under a single events lock, then drop
+        // before acquiring index locks. This eliminates nested write guards
+        // on dissent_events + dissent_by_proposal + dissent_by_agent which
+        // risked deadlock under concurrent dissent recording.
+        let (event, new_idx, needs_reindex) = {
+            let mut events = self
+                .dissent_events
+                .write()
+                .map_err(|e| Error::Other(format!("Lock poisoned: {e}")))?;
 
-        // Cap at MAX_DISSENT_EVENTS, removing oldest
-        if events.len() >= MAX_DISSENT_EVENTS {
-            events.remove(0);
-            // Re-index after removal (indices shift down by 1)
-            {
-                let mut by_proposal = self
-                    .dissent_by_proposal
-                    .write()
-                    .map_err(|e| Error::Other(format!("Lock poisoned: {e}")))?;
-                by_proposal.clear();
-                for (idx, event) in events.iter().enumerate() {
-                    by_proposal
-                        .entry(event.proposed_action.clone())
-                        .or_default()
-                        .push(idx);
-                }
-            }
-            {
-                let mut by_agent = self
-                    .dissent_by_agent
-                    .write()
-                    .map_err(|e| Error::Other(format!("Lock poisoned: {e}")))?;
-                by_agent.clear();
-                for (idx, event) in events.iter().enumerate() {
-                    by_agent
-                        .entry(event.dissenting_agent.clone())
-                        .or_default()
-                        .push(idx);
-                }
+            let needs_reindex = events.len() >= MAX_DISSENT_EVENTS;
+            if needs_reindex {
+                events.remove(0);
             }
 
-            // Now add the new event
             let dissent_id = format!(
                 "dissent-{}-{}-{}",
                 proposal_id,
@@ -162,76 +140,98 @@ impl DissentTracker {
             let idx = events.len();
             events.push(event.clone());
 
-            self.dissent_by_proposal
-                .write()
-                .map_err(|e| Error::Other(format!("Lock poisoned: {e}")))?
-                .entry(proposal_id.into())
-                .or_default()
-                .push(idx);
-            self.dissent_by_agent
-                .write()
-                .map_err(|e| Error::Other(format!("Lock poisoned: {e}")))?
-                .entry(agent_id.into())
-                .or_default()
-                .push(idx);
+            // Collect re-index data while still holding events lock
+            let proposal_index: Vec<(String, usize)> = if needs_reindex {
+                events
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| (e.proposed_action.clone(), i))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            // Index by raw agent_id (before ":Role" suffix) to match get_dissent_by_agent()
+            let agent_index: Vec<(String, usize)> = if needs_reindex {
+                events
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| {
+                        let raw_id = e
+                            .dissenting_agent
+                            .split(':')
+                            .next()
+                            .unwrap_or(&e.dissenting_agent)
+                            .to_string();
+                        (raw_id, i)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
-            return Ok(event);
-        }
+            drop(events); // CRITICAL: drop events lock BEFORE acquiring index locks
 
-        let dissent_id = format!(
-            "dissent-{}-{}-{}",
-            proposal_id,
-            agent_id,
-            events.len()
-        );
+            // Re-index if capacity was exceeded (locks acquired sequentially, not nested)
+            if needs_reindex {
+                if let Ok(mut by_proposal) = self.dissent_by_proposal.write() {
+                    by_proposal.clear();
+                    for (action, i) in &proposal_index {
+                        by_proposal.entry(action.clone()).or_default().push(*i);
+                    }
+                }
+                if let Ok(mut by_agent) = self.dissent_by_agent.write() {
+                    by_agent.clear();
+                    for (agent, i) in &agent_index {
+                        by_agent.entry(agent.clone()).or_default().push(*i);
+                    }
+                }
+            }
 
-        let event = DissentEvent {
-            id: dissent_id,
-            proposed_action: proposal_id.into(),
-            dissenting_agent: format!("{agent_id}:{agent_role:?}"),
-            reason,
-            outcome: None,
-            was_valuable: None,
-            timestamp: SystemTime::now(),
+            (event, idx, needs_reindex)
         };
 
-        let idx = events.len();
-        events.push(event.clone());
-        drop(events);
-
-        // Update proposal index
-        {
-            let mut by_proposal = self
-                .dissent_by_proposal
-                .write()
-                .map_err(|e| Error::Other(format!("Lock poisoned: {e}")))?;
-            let entry = by_proposal.entry(proposal_id.into()).or_default();
-            if entry.is_empty() {
-                // This is the first dissent for this proposal
-                drop(by_proposal);
-                let mut count = self
-                    .unique_proposals_with_dissent
-                    .write()
-                    .map_err(|e| Error::Other(format!("Lock poisoned: {e}")))?;
-                *count += 1;
-                drop(count);
+        // Update indexes for the new event. Skip if reindex already handled it
+        // (reindex rebuilds ALL indexes including the new event).
+        if !needs_reindex {
+            {
                 let mut by_proposal = self
                     .dissent_by_proposal
                     .write()
                     .map_err(|e| Error::Other(format!("Lock poisoned: {e}")))?;
-                by_proposal.entry(proposal_id.into()).or_default().push(idx);
-            } else {
-                entry.push(idx);
+                let entry = by_proposal
+                    .entry(event.proposed_action.clone())
+                    .or_default();
+                if entry.is_empty() {
+                    // First dissent for this proposal — update unique counter
+                    drop(by_proposal);
+                    if let Ok(mut count) = self.unique_proposals_with_dissent.write() {
+                        *count += 1;
+                    }
+                    if let Ok(mut by_proposal) = self.dissent_by_proposal.write() {
+                        by_proposal
+                            .entry(event.proposed_action.clone())
+                            .or_default()
+                            .push(new_idx);
+                    }
+                } else {
+                    entry.push(new_idx);
+                }
             }
-        }
 
-        // Update agent index
-        {
-            let mut by_agent = self
-                .dissent_by_agent
-                .write()
-                .map_err(|e| Error::Other(format!("Lock poisoned: {e}")))?;
-            by_agent.entry(agent_id.into()).or_default().push(idx);
+            // Use raw agent_id (not "agent:Role" composite) to match get_dissent_by_agent()
+            {
+                let agent_key = event
+                    .dissenting_agent
+                    .split(':')
+                    .next()
+                    .unwrap_or(&event.dissenting_agent)
+                    .to_string();
+                let mut by_agent = self
+                    .dissent_by_agent
+                    .write()
+                    .map_err(|e| Error::Other(format!("Lock poisoned: {e}")))?;
+                by_agent.entry(agent_key).or_default().push(new_idx);
+            }
         }
 
         Ok(event)

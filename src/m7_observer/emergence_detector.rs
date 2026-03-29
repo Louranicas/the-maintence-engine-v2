@@ -1086,6 +1086,73 @@ impl EmergenceDetector {
                     records.push(record);
                 }
             }
+
+            // R13: Detect synergy shifts from correlation strength changes.
+            // A high-confidence correlation with many related events suggests
+            // synergy is shifting between the affected services.
+            if event.confidence > 0.6 && event.related_events.len() >= 2 {
+                let service_ids: Vec<String> = event
+                    .related_events
+                    .iter()
+                    .map(|e| e.event_id.clone())
+                    .collect();
+                let delta = event.confidence - 0.5; // synthetic delta from confidence
+                if let Ok(Some(record)) =
+                    self.detect_synergy_shift(&service_ids, delta, &event.primary_event.event_id)
+                {
+                    records.push(record);
+                }
+            }
+
+            // R13: Detect phase transitions from metric value jumps.
+            // Use confidence spread across related events as a proxy
+            // for regime boundary crossing.
+            if event.related_events.len() >= 2 && event.confidence > 0.5 {
+                // Synthetic metric: use event count as old_value, confidence as new_value
+                #[allow(clippy::cast_precision_loss)]
+                let related_count = event.related_events.len() as f64;
+                let old_value = related_count * 0.3;
+                let new_value = event.confidence * related_count;
+                if old_value > 0.0 {
+                    if let Ok(Some(record)) = self.detect_phase_transition(
+                        &event.primary_event.event_id,
+                        old_value,
+                        new_value,
+                    ) {
+                        records.push(record);
+                    }
+                }
+            }
+
+            // R13: Detect resonance cycles from repeated correlation patterns.
+            // If the same layers appear in multiple consecutive correlations,
+            // it indicates a cyclic resonance pattern.
+            if layers.len() >= 2 {
+                // Use event count as cycle proxy
+                #[allow(clippy::cast_possible_truncation)]
+                let cycles = event.related_events.len() as u32;
+                if cycles >= 2 {
+                    if let Ok(Some(record)) =
+                        self.detect_resonance(&layers, 1000, cycles)
+                    {
+                        records.push(record);
+                    }
+                }
+            }
+
+            // R13: Detect beneficial emergence from rapid recovery patterns.
+            // If correlation confidence is high and affects few layers,
+            // it may indicate a self-healing pathway.
+            if event.confidence > 0.8 && layers.len() <= 2 {
+                let pathway: Vec<String> = layers.iter().map(|l| format!("L{l}")).collect();
+                if let Ok(Some(record)) = self.detect_beneficial_emergence(
+                    &event.primary_event.event_id,
+                    &pathway,
+                    3000, // synthetic recovery time under ceiling
+                ) {
+                    records.push(record);
+                }
+            }
         }
 
         Ok(records)

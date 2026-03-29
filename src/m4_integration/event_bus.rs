@@ -95,10 +95,27 @@ pub struct ChannelInfo {
     pub created_at: DateTime<Utc>,
 }
 
+/// R21: Trait for receiving event callbacks from the `EventBus`.
+///
+/// Implementors receive synchronous `on_event` calls during `publish()`,
+/// enabling active event delivery instead of passive polling. This is
+/// the fundamental architectural upgrade that turns the `EventBus` from
+/// bookkeeping into an active nervous system.
+///
+/// # Important
+///
+/// Callbacks MUST NOT acquire the `EventBus`'s internal locks (deadlock risk).
+/// Keep callbacks fast (< 1ms) — defer heavy work to background tasks.
+pub trait EventSubscriber: Send + Sync {
+    /// Called synchronously during `publish()` for each matching event.
+    fn on_event(&self, event: &EventRecord);
+}
+
 /// A pub/sub event bus for distributing events across the Maintenance Engine.
 ///
 /// Supports named channels, subscriber management, event publishing with
-/// optional type-based filtering, and an audit log of all published events.
+/// optional type-based filtering, callback delivery (R21), and an audit
+/// log of all published events.
 pub struct EventBus {
     /// Subscriptions per channel name.
     subscribers: RwLock<HashMap<String, Vec<Subscription>>>,
@@ -106,6 +123,8 @@ pub struct EventBus {
     event_log: RwLock<Vec<EventRecord>>,
     /// Channel metadata, keyed by channel name.
     channels: RwLock<HashMap<String, ChannelInfo>>,
+    /// R21: Registered callback subscribers keyed by subscriber ID.
+    callbacks: RwLock<HashMap<String, std::sync::Arc<dyn EventSubscriber>>>,
 }
 
 impl EventBus {
@@ -135,6 +154,7 @@ impl EventBus {
             subscribers: RwLock::new(subscribers_map),
             event_log: RwLock::new(Vec::with_capacity(EVENT_LOG_CAPACITY)),
             channels: RwLock::new(channels_map),
+            callbacks: RwLock::new(HashMap::new()),
         }
     }
 
@@ -261,6 +281,25 @@ impl EventBus {
         Ok(())
     }
 
+    /// R21: Register a callback subscriber for active event delivery.
+    ///
+    /// When an event is published to a channel where this subscriber is
+    /// registered, the callback's `on_event` method is called synchronously.
+    /// The subscriber must also be subscribed to the channel via `subscribe()`.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic — duplicate registrations silently overwrite.
+    pub fn register_callback(
+        &self,
+        subscriber_id: &str,
+        callback: std::sync::Arc<dyn EventSubscriber>,
+    ) {
+        self.callbacks
+            .write()
+            .insert(subscriber_id.to_string(), callback);
+    }
+
     /// Publish an event to a channel.
     ///
     /// The event is delivered to all subscribers on the channel. If a subscriber
@@ -327,6 +366,19 @@ impl EventBus {
         // Increment channel event count
         if let Some(info) = self.channels.write().get_mut(channel) {
             info.event_count += 1;
+        }
+
+        // R21: Invoke registered callbacks for matching subscribers.
+        // Callbacks are called synchronously — keep them fast (< 1ms).
+        // Lock ordering: callbacks lock acquired AFTER event_log and channels
+        // locks are released, preventing deadlock.
+        {
+            let cbs = self.callbacks.read();
+            for subscriber_id in &record.delivered_to {
+                if let Some(cb) = cbs.get(subscriber_id) {
+                    cb.on_event(&record);
+                }
+            }
         }
 
         Ok(record)

@@ -245,6 +245,23 @@ impl fmt::Display for ServiceTier {
     }
 }
 
+/// R18: Type-safe conversion from raw tier values.
+///
+/// Maps `1..=5` to the corresponding tier. Values outside that range
+/// default to `Tier5` (lowest priority) to prevent silent mismatches
+/// in cross-module tier comparisons.
+impl From<u8> for ServiceTier {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => Self::Tier1,
+            2 => Self::Tier2,
+            3 => Self::Tier3,
+            4 => Self::Tier4,
+            _ => Self::Tier5,
+        }
+    }
+}
+
 // ============================================================================
 // CircuitState
 // ============================================================================
