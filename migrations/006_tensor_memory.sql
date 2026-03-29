@@ -23,27 +23,8 @@ CREATE TABLE IF NOT EXISTS tensor_snapshots (
     d8_synergy REAL NOT NULL CHECK (d8_synergy BETWEEN 0.0 AND 1.0),
     d9_latency REAL NOT NULL DEFAULT 0.0,
     d10_error_rate REAL NOT NULL CHECK (d10_error_rate BETWEEN 0.0 AND 1.0),
-    d11_temporal REAL NOT NULL DEFAULT 0.0,
-
-    -- Computed magnitude
-    magnitude REAL GENERATED ALWAYS AS (
-        sqrt(
-            d0_service_id * d0_service_id +
-            d1_port * d1_port +
-            d2_tier * d2_tier +
-            d3_deps * d3_deps +
-            d4_agents * d4_agents +
-            d5_protocol * d5_protocol +
-            d6_health * d6_health +
-            d7_uptime * d7_uptime +
-            d8_synergy * d8_synergy +
-            d9_latency * d9_latency +
-            d10_error_rate * d10_error_rate +
-            d11_temporal * d11_temporal
-        )
-    ) STORED,
-
-    FOREIGN KEY (service_id) REFERENCES services(id)
+    d11_temporal REAL NOT NULL DEFAULT 0.0
+    -- NOTE: magnitude computed in Rust (SQLite lacks sqrt() without math extension)
 );
 
 --------------------------------------------------------------------------------
@@ -294,16 +275,7 @@ CREATE TABLE IF NOT EXISTS workflow_tensor_deltas (
     delta_d9 REAL DEFAULT 0,  -- latency change
     delta_d10 REAL DEFAULT 0, -- error_rate change
     delta_d11 REAL DEFAULT 0, -- temporal change
-
-    -- Computed magnitude of change
-    delta_magnitude REAL GENERATED ALWAYS AS (
-        sqrt(
-            delta_d0 * delta_d0 + delta_d1 * delta_d1 + delta_d2 * delta_d2 +
-            delta_d3 * delta_d3 + delta_d4 * delta_d4 + delta_d5 * delta_d5 +
-            delta_d6 * delta_d6 + delta_d7 * delta_d7 + delta_d8 * delta_d8 +
-            delta_d9 * delta_d9 + delta_d10 * delta_d10 + delta_d11 * delta_d11
-        )
-    ) STORED,
+    -- NOTE: delta_magnitude computed in Rust (SQLite lacks sqrt())
 
     -- Impact assessment
     impact_category TEXT CHECK (impact_category IN ('positive', 'negative', 'neutral', 'mixed')),

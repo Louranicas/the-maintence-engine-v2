@@ -48,6 +48,7 @@ const DEFAULT_CHANNELS: &[&str] = &[
     "consensus",
     "integration",
     "metrics",
+    "gc",
 ];
 
 /// A record of a published event, including delivery metadata.

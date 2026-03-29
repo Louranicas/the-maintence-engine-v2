@@ -256,6 +256,7 @@ fn spawn_background_tasks(state: &Arc<AppState>) {
     spawn_self_model_updater(state);
     spawn_remediation_worker(state);
     spawn_evolution_tick(state);
+    spawn_gc_sweep(state);
 }
 
 /// Issue 9: One-shot trigger of a DevOps Engine health-check pipeline.
@@ -313,7 +314,7 @@ fn spawn_pv2_eventbus_bridge(state: &Arc<AppState>) {
         tokio::time::sleep(Duration::from_secs(15)).await;
         tracing::info!("PV2 EventBus bridge started (10s poll interval)");
 
-        let channels = ["health", "remediation", "learning", "consensus", "integration", "metrics"];
+        let channels = ["health", "remediation", "learning", "consensus", "integration", "metrics", "gc"];
 
         // R2 fix: Register as subscriber on each EventBus channel so that
         // subscriber_count > 0. Previously the bridge was polling events
@@ -529,6 +530,16 @@ fn spawn_health_polling(state: &Arc<AppState>) {
 
                 // C12: Record STDP co-activation for each successful service interaction
                 let _ = poll_state.engine.stdp_bridge().record_interaction("maintenance-engine", service_id, is_healthy);
+
+                // Session 071 CF-7 fix: Reinforce L5 Hebbian pathways on health success.
+                // Without this, pathways decay at -0.001/300s with zero reinforcement,
+                // reaching floor (0.1) at ~41.7 hours. This wires the health poll
+                // success signal into the Hebbian manager's record_success().
+                if is_healthy {
+                    let _ = poll_state.engine.hebbian_manager().record_success("health_failure->service_restart");
+                } else {
+                    let _ = poll_state.engine.hebbian_manager().record_failure("health_failure->service_restart");
+                }
 
                 // R5 fix: Feed L5 StdpProcessor directly for timing pair generation.
                 // The N04 StdpBridge records co-activation deltas but does NOT
@@ -846,6 +857,9 @@ fn spawn_evolution_tick(state: &Arc<AppState>) {
         let mut interval = tokio::time::interval(Duration::from_millis(
             maintenance_engine_v2::m7_observer::evolution_chamber::DEFAULT_EVOLUTION_TICK_MS,
         ));
+        // Phase 4 (Session 070): Skip missed ticks instead of burst catch-up.
+        // Prevents RALPH from processing a backlog of ticks after a slow GC sweep.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
 
         loop {
@@ -904,7 +918,12 @@ fn spawn_evolution_tick(state: &Arc<AppState>) {
                 .as_ref()
                 .map_or("emergence_detector.min_confidence", |h| &h.parameter);
 
-            let current_val = 0.4_f64; // default; in production, read from live config
+            // Read the actual current parameter value from the observer
+            let current_val = if target_param == "emergence_detector.min_confidence" {
+                obs.detector().effective_min_confidence()
+            } else {
+                0.5_f64 // fallback for unknown parameters
+            };
 
             if let Err(e) = obs.chamber().propose_v2_mutation(
                 target_param,
@@ -954,10 +973,20 @@ fn spawn_observer_tick(state: &Arc<AppState>) {
 
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(tick_interval));
+        // Phase 4 (Session 070): Skip missed ticks to prevent burst catch-up after slow cycles.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
         loop {
             interval.tick().await;
+            let tick_start = std::time::Instant::now();
             observer_tick_cycle(&tick_state).await;
+            let tick_ms = tick_start.elapsed().as_millis();
+            if tick_ms > 1000 {
+                tracing::warn!(
+                    tick_ms,
+                    "Observer tick exceeded 1s budget — check for contention"
+                );
+            }
         }
     });
 }
@@ -1586,8 +1615,8 @@ fn ingest_eventbus_events(state: &Arc<AppState>) {
         return;
     };
 
-    // Drain events from all 6 default channels
-    let channels = ["health", "remediation", "learning", "consensus", "integration", "metrics"];
+    // Drain events from all 7 default channels (incl. gc added Session 070)
+    let channels = ["health", "remediation", "learning", "consensus", "integration", "metrics", "gc"];
 
     let mut total_ingested: u64 = 0;
     for channel in &channels {
@@ -1973,6 +2002,409 @@ fn spawn_decay_scheduler(state: &Arc<AppState>) {
             }
         }
     });
+}
+
+/// Habitat GC sweep — runs every hour (3600s). Session 070 Phase 2.
+///
+/// Responsibilities:
+/// 1. Prune ME V2 database rows older than retention thresholds (batched)
+/// 2. Trigger cross-service GC: RM `DELETE /gc`, ORAC `POST /blackboard/prune`
+/// 3. Wire existing `PathwayPruner::prune()` from M28
+/// 4. Publish GC summary event to `EventBus` "gc" channel
+/// 5. Append audit entry to `/tmp/gc-audit.jsonl`
+///
+/// Does NOT run in the RALPH tick loop (S-Biggest Risk mitigation).
+/// All HTTP calls use `tokio::time::timeout` with 5s cap.
+fn spawn_gc_sweep(state: &Arc<AppState>) {
+    let gc_state = Arc::clone(state);
+    tokio::spawn(async move {
+        // Wait 60s for services to stabilize before first GC
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        tracing::info!("GC sweep started (3600s interval)");
+
+        let mut interval = tokio::time::interval(Duration::from_secs(3600));
+        interval.tick().await; // skip immediate tick
+        loop {
+            interval.tick().await;
+
+            if gc_state
+                .metabolic_paused
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                tracing::debug!("GC sweep skipped: metabolic paused");
+                continue;
+            }
+
+            let sweep_start = std::time::Instant::now();
+            let mut total_pruned: u64 = 0;
+
+            // ── 0. Disk pressure check (Phase 3, Session 070) ──
+            let disk_pct = gc_check_disk_usage().await;
+            if disk_pct > 90.0 {
+                tracing::warn!(disk_pct, "GC: CRITICAL disk pressure — pausing metabolism");
+                gc_state
+                    .metabolic_paused
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            } else if disk_pct > 85.0 {
+                tracing::warn!(disk_pct, "GC: EMERGENCY disk pressure");
+            } else if disk_pct > 80.0 {
+                tracing::info!(disk_pct, "GC: WARNING disk pressure");
+            }
+
+            // Auto-resume: if metabolic_paused was set by GC and disk is now < 80%, resume
+            if gc_state
+                .metabolic_paused
+                .load(std::sync::atomic::Ordering::Relaxed)
+                && disk_pct < 80.0
+            {
+                gc_state
+                    .metabolic_paused
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                tracing::info!(disk_pct, "GC: auto-resumed metabolism (disk recovered)");
+            }
+
+            // ── 1. Prune ME V2 databases (batched DELETEs) ──
+            if let Some(ref db) = gc_state.db {
+                total_pruned += gc_prune_evolution_db(db).await;
+                total_pruned += gc_prune_performance_db(db).await;
+                total_pruned += gc_prune_service_events(db).await;
+            }
+
+            // M28 Pathway Pruner runs via spawn_learning_cycle (300s).
+            // GC does not duplicate it — learning_cycle() already calls prune().
+
+            // ── 2. Cross-service GC triggers ──
+            total_pruned += gc_trigger_rm().await;
+            total_pruned += gc_trigger_orac_prune().await;
+
+            // ── 4. Publish GC summary to EventBus ──
+            let duration_ms = sweep_start.elapsed().as_millis();
+            let payload = serde_json::json!({
+                "event": "gc_sweep",
+                "total_pruned": total_pruned,
+                "duration_ms": duration_ms,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+            if let Err(e) = gc_state.engine.event_bus().publish(
+                "gc", "gc_sweep", &payload.to_string(), "gc_sweep",
+            ) {
+                tracing::trace!(error = %e, "GC: EventBus publish failed (non-fatal)");
+            }
+
+            // ── 5. Audit log ──
+            gc_append_audit(total_pruned, duration_ms).await;
+
+            tracing::info!(
+                total_pruned,
+                duration_ms,
+                "GC sweep completed"
+            );
+        }
+    });
+}
+
+/// Prune `fitness_history` and `mutation_log` rows older than 30 days.
+///
+/// Uses batched DELETEs (100 rows per iteration) with `tokio::time::sleep`
+/// between batches to yield to concurrent writers.
+async fn gc_prune_evolution_db(db: &maintenance_engine_v2::database::DatabaseManager) -> u64 {
+    use maintenance_engine_v2::m1_foundation::state::{execute, DatabaseType};
+
+    let Ok(pool) = db.persistence().pool(DatabaseType::EvolutionTracking) else {
+        return 0;
+    };
+
+    let cutoff = chrono::Utc::now()
+        .checked_sub_signed(chrono::Duration::days(30))
+        .map_or_else(String::new, |dt| dt.to_rfc3339());
+
+    if cutoff.is_empty() {
+        return 0;
+    }
+
+    let mut total: u64 = 0;
+    // Batch-delete fitness_history
+    loop {
+        match execute(
+            pool,
+            "DELETE FROM fitness_history WHERE rowid IN (SELECT rowid FROM fitness_history WHERE timestamp < ?1 LIMIT 100)",
+            &[cutoff.as_str()],
+        )
+        .await
+        {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "GC: fitness_history prune failed");
+                break;
+            }
+        }
+    }
+
+    // Batch-delete mutation_log
+    loop {
+        match execute(
+            pool,
+            "DELETE FROM mutation_log WHERE rowid IN (SELECT rowid FROM mutation_log WHERE timestamp < ?1 LIMIT 100)",
+            &[cutoff.as_str()],
+        )
+        .await
+        {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "GC: mutation_log prune failed");
+                break;
+            }
+        }
+    }
+
+    if total > 0 {
+        tracing::info!(total, "GC: evolution DB rows pruned");
+    }
+    total
+}
+
+/// Prune `performance_samples` older than 30 days.
+async fn gc_prune_performance_db(db: &maintenance_engine_v2::database::DatabaseManager) -> u64 {
+    use maintenance_engine_v2::m1_foundation::state::{execute, DatabaseType};
+
+    let Ok(pool) = db.persistence().pool(DatabaseType::PerformanceMetrics) else {
+        return 0;
+    };
+
+    let cutoff = chrono::Utc::now()
+        .checked_sub_signed(chrono::Duration::days(30))
+        .map_or_else(String::new, |dt| dt.to_rfc3339());
+
+    if cutoff.is_empty() {
+        return 0;
+    }
+
+    let mut total: u64 = 0;
+    loop {
+        match execute(
+            pool,
+            "DELETE FROM performance_samples WHERE rowid IN (SELECT rowid FROM performance_samples WHERE timestamp < ?1 LIMIT 100)",
+            &[cutoff.as_str()],
+        )
+        .await
+        {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "GC: performance_samples prune failed");
+                break;
+            }
+        }
+    }
+
+    if total > 0 {
+        tracing::info!(total, "GC: performance DB rows pruned");
+    }
+    total
+}
+
+/// Prune `service_events` older than 90 days.
+async fn gc_prune_service_events(db: &maintenance_engine_v2::database::DatabaseManager) -> u64 {
+    use maintenance_engine_v2::m1_foundation::state::{execute, DatabaseType};
+
+    let Ok(pool) = db.persistence().pool(DatabaseType::ServiceTracking) else {
+        return 0;
+    };
+
+    let cutoff = chrono::Utc::now()
+        .checked_sub_signed(chrono::Duration::days(90))
+        .map_or_else(String::new, |dt| dt.to_rfc3339());
+
+    if cutoff.is_empty() {
+        return 0;
+    }
+
+    let mut total: u64 = 0;
+    loop {
+        match execute(
+            pool,
+            "DELETE FROM service_events WHERE rowid IN (SELECT rowid FROM service_events WHERE timestamp < ?1 LIMIT 100)",
+            &[cutoff.as_str()],
+        )
+        .await
+        {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "GC: service_events prune failed");
+                break;
+            }
+        }
+    }
+
+    if total > 0 {
+        tracing::info!(total, "GC: service events pruned");
+    }
+    total
+}
+
+/// Trigger RM garbage collection via `DELETE /gc` on port 8130.
+async fn gc_trigger_rm() -> u64 {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let addr = "127.0.0.1:8130";
+    let request = "DELETE /gc HTTP/1.1\r\nHost: 127.0.0.1:8130\r\nConnection: close\r\n\r\n";
+
+    match tokio::time::timeout(Duration::from_secs(5), async {
+        let stream = tokio::net::TcpStream::connect(addr).await?;
+        let (reader, mut writer) = stream.into_split();
+        writer.write_all(request.as_bytes()).await?;
+        writer.shutdown().await?;
+        let mut body = Vec::new();
+        tokio::io::BufReader::new(reader)
+            .read_to_end(&mut body)
+            .await?;
+        Ok::<_, std::io::Error>(body)
+    })
+    .await
+    {
+        Ok(Ok(body)) => {
+            let resp = String::from_utf8_lossy(&body);
+            if resp.contains("gc_removed") {
+                // Parse gc_removed count from response
+                if let Some(n) = resp
+                    .split("gc_removed\":")
+                    .nth(1)
+                    .and_then(|s| s.split([',', '}'].as_ref()).next())
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                {
+                    if n > 0 {
+                        tracing::info!(removed = n, "GC: RM /gc triggered");
+                    }
+                    return n;
+                }
+            }
+            0
+        }
+        Ok(Err(e)) => {
+            tracing::debug!(error = %e, "GC: RM /gc call failed (non-fatal)");
+            0
+        }
+        Err(_) => {
+            tracing::debug!("GC: RM /gc call timed out (non-fatal)");
+            0
+        }
+    }
+}
+
+/// Trigger ORAC blackboard prune via `POST /blackboard/prune` on port 8133.
+async fn gc_trigger_orac_prune() -> u64 {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let addr = "127.0.0.1:8133";
+    let request =
+        "POST /blackboard/prune HTTP/1.1\r\nHost: 127.0.0.1:8133\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    match tokio::time::timeout(Duration::from_secs(5), async {
+        let stream = tokio::net::TcpStream::connect(addr).await?;
+        let (reader, mut writer) = stream.into_split();
+        writer.write_all(request.as_bytes()).await?;
+        writer.shutdown().await?;
+        let mut body = Vec::new();
+        tokio::io::BufReader::new(reader)
+            .read_to_end(&mut body)
+            .await?;
+        Ok::<_, std::io::Error>(body)
+    })
+    .await
+    {
+        Ok(Ok(body)) => {
+            let resp = String::from_utf8_lossy(&body);
+            // Sum all fields from PruneReport JSON
+            let total: u64 = ["stale_panes", "complete_panes", "old_tasks", "ghosts",
+                "hebbian_summaries", "consent_audit", "stale_sessions", "coupling_compacted"]
+                .iter()
+                .filter_map(|key| {
+                    resp.split(&format!("\"{key}\":"))
+                        .nth(1)
+                        .and_then(|s| s.split([',', '}'].as_ref()).next())
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                })
+                .sum();
+            if total > 0 {
+                tracing::info!(total, "GC: ORAC blackboard prune triggered");
+            }
+            total
+        }
+        Ok(Err(e)) => {
+            tracing::debug!(error = %e, "GC: ORAC prune call failed (non-fatal)");
+            0
+        }
+        Err(_) => {
+            tracing::debug!("GC: ORAC prune call timed out (non-fatal)");
+            0
+        }
+    }
+}
+
+/// Append a GC audit entry to `/tmp/gc-audit.jsonl`.
+async fn gc_append_audit(total_pruned: u64, duration_ms: u128) {
+    use tokio::io::AsyncWriteExt;
+
+    let entry = format!(
+        "{{\"ts\":\"{}\",\"action\":\"gc_sweep\",\"pruned\":{total_pruned},\"duration_ms\":{duration_ms}}}\n",
+        chrono::Utc::now().to_rfc3339(),
+    );
+    match tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/gc-audit.jsonl")
+        .await
+    {
+        Ok(mut f) => {
+            if let Err(e) = f.write_all(entry.as_bytes()).await {
+                tracing::debug!(error = %e, "GC: audit log write failed (non-fatal)");
+            }
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "GC: audit log open failed (non-fatal)");
+        }
+    }
+}
+
+/// Check root partition disk usage via `df /` (Phase 3, Session 070).
+///
+/// Uses `tokio::task::spawn_blocking` to avoid blocking the async runtime.
+/// Returns the usage percentage (0.0-100.0), or 50.0 on failure (safe fallback).
+async fn gc_check_disk_usage() -> f64 {
+    tokio::task::spawn_blocking(|| {
+        let output = std::process::Command::new("df")
+            .args(["--output=pcent", "/"])
+            .output();
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                // df output: "Use%\n 75%\n" — extract the number
+                stdout
+                    .lines()
+                    .nth(1)
+                    .and_then(|line| line.trim().trim_end_matches('%').parse::<f64>().ok())
+                    .unwrap_or(50.0)
+            }
+            Err(_) => 50.0, // Safe fallback — don't trigger false alarms
+        }
+    })
+    .await
+    .unwrap_or(50.0)
 }
 
 /// Persist peer poll results as service events, auto-remediate unhealthy peers,
