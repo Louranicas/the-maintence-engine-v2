@@ -32,6 +32,7 @@
 | **Status (compact)** | [`.claude/status.json`](.claude/status.json) | Ultra-compact heartbeat state |
 | **Patterns** | [`.claude/patterns.json`](.claude/patterns.json) | 22 mandatory Rust patterns (P01-P22) |
 | **Alignment Check** | [`.claude/ALIGNMENT_VERIFICATION.md`](.claude/ALIGNMENT_VERIFICATION.md) | Triple alignment verification procedures |
+| **Engine Init Map** | Obsidian: `[[ME V2 Engine Initialization Map]]` | 38-field Engine::new() analysis (Session 069) |
 
 ---
 
