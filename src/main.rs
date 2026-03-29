@@ -733,6 +733,15 @@ fn spawn_observer_tick(state: &Arc<AppState>) {
 /// tick observer, persist results, and auto-remediate if fitness is `Critical`.
 #[allow(clippy::too_many_lines)]
 async fn observer_tick_cycle(state: &Arc<AppState>) {
+    // Check metabolic pause flag — skip entire tick if paused (NAM-R7)
+    if state
+        .metabolic_paused
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        tracing::trace!("Observer tick skipped: metabolic paused");
+        return;
+    }
+
     // Phase 1B: Drain EventBus events into M37 BEFORE fitness evaluation.
     // This is the critical wiring that feeds the M37→M38→M39 pipeline.
     ingest_eventbus_events(state);
