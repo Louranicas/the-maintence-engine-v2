@@ -1,0 +1,18 @@
+[package]
+name    = "habitat-nexus"
+version = "2.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zellij-tile = "0.43"
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+uuid        = { version = "1", features = ["v4"] }
+
+[profile.release]
+opt-level = "s"
+lto       = true
+panic     = "abort"
