@@ -23,7 +23,6 @@
 //! | `CodeSynthor` V7 | 8110 | REST/WS | 2 |
 //! | DevOps Engine | 8081 | REST | 2 |
 //! | Tool Library | 8105 | REST | 3 |
-//! | Library Agent | 8083 | REST | 3 |
 //! | CCM | 8104 | REST | 3 |
 //! | Prometheus Swarm | 10001+ | REST | 4 |
 //! | Architect Agent | 9001+ | REST | 4 |
@@ -221,17 +220,7 @@ pub fn default_endpoints() -> Vec<ServiceEndpoint> {
             retry_enabled: true,
             max_retries: 3,
         },
-        ServiceEndpoint {
-            service_id: "library-agent".into(),
-            host: "localhost".into(),
-            port: 8083,
-            protocol: WireProtocol::Rest,
-            health_path: "/health".into(),
-            base_path: "/api".into(),
-            timeout_ms: 100_000,
-            retry_enabled: true,
-            max_retries: 3,
-        },
+        // library-agent (8083) removed: disabled in devenv, was dragging fitness tensor
         ServiceEndpoint {
             service_id: "ccm".into(),
             host: "localhost".into(),
@@ -295,7 +284,7 @@ pub fn default_wire_weights() -> Vec<WireWeight> {
         WireWeight { source: "maintenance-engine".into(), target: "devops-engine".into(), weight: 1.3, latency_slo_ms: 50, error_budget: 0.005 },
         WireWeight { source: "maintenance-engine".into(), target: "tool-library".into(), weight: 1.2, latency_slo_ms: 100, error_budget: 0.01 },
         WireWeight { source: "maintenance-engine".into(), target: "ccm".into(), weight: 1.2, latency_slo_ms: 100, error_budget: 0.01 },
-        WireWeight { source: "maintenance-engine".into(), target: "library-agent".into(), weight: 1.2, latency_slo_ms: 100, error_budget: 0.01 },
+        // library-agent wire weight removed (disabled service)
         WireWeight { source: "maintenance-engine".into(), target: "bash-engine".into(), weight: 1.0, latency_slo_ms: 500, error_budget: 0.02 },
         WireWeight { source: "maintenance-engine".into(), target: "tool-maker".into(), weight: 1.0, latency_slo_ms: 500, error_budget: 0.02 },
     ]
@@ -315,7 +304,7 @@ mod tests {
     #[test]
     fn test_default_endpoints() {
         let endpoints = default_endpoints();
-        assert!(endpoints.len() >= 10);
+        assert!(endpoints.len() >= 9); // 9 after library-agent removal
         assert!(endpoints.iter().any(|e| e.service_id == "synthex"));
     }
 

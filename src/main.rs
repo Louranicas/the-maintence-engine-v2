@@ -3010,7 +3010,7 @@ async fn handle_services(
                 service_entry("codesynthor-v7", "CodeSynthor V7", 8110, 2, 1.3),
                 service_entry("devops-engine", "DevOps Engine", 8081, 2, 1.3),
                 service_entry("tool-library", "Tool Library", 8105, 3, 1.2),
-                service_entry("library-agent", "Library Agent", 8083, 3, 1.2),
+                // library-agent (8083) removed: disabled in devenv, was dragging fitness tensor
                 service_entry("ccm", "Claude Context Manager", 8104, 3, 1.2),
                 service_entry("prometheus-swarm", "Prometheus Swarm", 10001, 4, 1.1),
                 service_entry("architect-agent", "Architect Agent", 9001, 4, 1.1),

@@ -666,15 +666,7 @@ pub fn default_peer_configs() -> Vec<PeerConfig> {
             weight: 1.2,
             poll_interval_secs: 30,
         },
-        PeerConfig {
-            service_id: "library-agent".into(),
-            host: "localhost".into(),
-            port: 8083,
-            health_path: "/health".into(),
-            tier: 3,
-            weight: 1.2,
-            poll_interval_secs: 30,
-        },
+        // library-agent (8083) removed: disabled in devenv, was dragging fitness tensor
         // Tier 4: Orchestration (60s polling)
         PeerConfig {
             service_id: "prometheus-swarm".into(),
@@ -731,7 +723,7 @@ mod tests {
     #[test]
     fn test_default_peer_count() {
         let manager = PeerBridgeManager::new().expect("create manager");
-        assert_eq!(manager.peer_count(), 12);
+        assert_eq!(manager.peer_count(), 11); // library-agent removed
     }
 
     #[test]
@@ -793,9 +785,9 @@ mod tests {
     }
 
     #[test]
-    fn test_default_peer_configs_has_12() {
+    fn test_default_peer_configs_has_11() {
         let configs = default_peer_configs();
-        assert_eq!(configs.len(), 12);
+        assert_eq!(configs.len(), 11); // library-agent removed
     }
 
     #[test]
@@ -957,7 +949,7 @@ mod tests {
     fn test_all_states_returns_all_peers() {
         let manager = PeerBridgeManager::new().expect("create manager");
         let states = manager.all_states();
-        assert_eq!(states.len(), 12);
+        assert_eq!(states.len(), 11); // library-agent removed
     }
 
     #[test]
@@ -978,7 +970,7 @@ mod tests {
     fn test_mesh_summary_structure() {
         let manager = PeerBridgeManager::new().expect("create manager");
         let summary = manager.mesh_summary();
-        assert_eq!(summary.total_peers, 12);
+        assert_eq!(summary.total_peers, 11); // library-agent removed
         assert_eq!(summary.reachable_peers, 0);
         assert_eq!(summary.circuit_open_count, 0);
     }

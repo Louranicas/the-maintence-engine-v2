@@ -1103,19 +1103,18 @@ impl Engine {
     /// Register health probes for all ULTRAPLATE services so that the
     /// health monitor can track their status via HTTP polling.
     fn populate_health_probes(monitor: &HealthMonitor) {
-        let probes: [(&str, &str); 12] = [
-            ("devops-engine",    "http://localhost:8081/health"),
-            ("synthex",          "http://localhost:8090/api/health"),
-            ("san-k7",           "http://localhost:8100/health"),
-            ("nais",             "http://localhost:8101/health"),
-            ("bash-engine",      "http://localhost:8102/health"),
-            ("tool-maker",       "http://localhost:8103/health"),
-            ("ccm",              "http://localhost:8104/health"),
-            ("tool-library",     "http://localhost:8105/health"),
-            ("codesynthor-v7",   "http://localhost:8110/health"),
-            ("povm-engine",      "http://localhost:8125/health"),
-            ("pane-vortex",      "http://localhost:8132/health"),
-            ("reasoning-memory", "http://localhost:8130/health"),
+        let probes: [(&str, &str); 11] = [
+            ("dev-ops-engine-v3",  "http://localhost:8082/health"),
+            ("habitat-nerve-center","http://localhost:8083/health"),
+            ("synthex",            "http://localhost:8090/api/health"),
+            ("codesynthor-v8",     "http://localhost:8111/health"),
+            ("vortex-memory-system","http://localhost:8120/health"),
+            ("povm-engine",        "http://localhost:8125/health"),
+            ("reasoning-memory",   "http://localhost:8130/health"),
+            ("pane-vortex",        "http://localhost:8132/health"),
+            ("orac-sidecar",       "http://localhost:8133/health"),
+            ("maintenance-engine", "http://localhost:8180/api/health"),
+            ("prometheus-swarm-v2","http://localhost:10002/health"),
         ];
         for &(id, endpoint) in &probes {
             if let Ok(probe) = HealthProbeBuilder::new(id, endpoint)
@@ -1320,8 +1319,8 @@ mod tests {
     #[test]
     fn test_engine_default_event_channels() {
         let engine = Engine::new();
-        // EventBus::new() creates 6 default channels
-        assert_eq!(engine.event_channel_count(), 6);
+        // EventBus::new() creates 7 default channels (6 original + "gc")
+        assert_eq!(engine.event_channel_count(), 7);
     }
 
     // ---------------------------------------------------------------

@@ -728,7 +728,7 @@ pub fn register_ultraplate_services(registry: &dyn ServiceDiscovery) -> Result<(
     register_service(registry, "codesynthor-v7", "CodeSynthor V7", "7.3.0", ServiceTier::Tier2, "localhost", 8110, "REST", "/health")?;
     register_service(registry, "devops-engine", "DevOps Engine", "2.0.0", ServiceTier::Tier2, "localhost", 8081, "REST", "/health")?;
     register_service(registry, "tool-library", "Tool Library", "1.0.0", ServiceTier::Tier3, "localhost", 8105, "REST", "/health")?;
-    register_service(registry, "library-agent", "Library Agent", "1.0.0", ServiceTier::Tier3, "localhost", 8083, "REST", "/health")?;
+    // library-agent (8083) removed: disabled in devenv, was dragging fitness tensor
     register_service(registry, "ccm", "Claude Context Manager", "1.0.0", ServiceTier::Tier3, "localhost", 8104, "REST", "/health")?;
     register_service(registry, "prometheus-swarm", "Prometheus Swarm", "1.0.0", ServiceTier::Tier4, "localhost", 10001, "REST", "/health")?;
     register_service(registry, "architect-agent", "Architect Agent", "1.0.0", ServiceTier::Tier4, "localhost", 9001, "REST", "/health")?;
@@ -1061,7 +1061,7 @@ mod tests {
         let reg = ServiceRegistry::new();
         let result = register_ultraplate_services(&reg);
         assert!(result.is_ok());
-        assert_eq!(reg.service_count(), 12);
+        assert_eq!(reg.service_count(), 11); // library-agent removed
         assert!(reg.is_registered("synthex"));
         assert!(reg.is_registered("san-k7"));
         assert!(reg.is_registered("bash-engine"));
@@ -1076,7 +1076,7 @@ mod tests {
 
         assert_eq!(reg.discover_by_tier(ServiceTier::Tier1).len(), 2);
         assert_eq!(reg.discover_by_tier(ServiceTier::Tier2).len(), 3);
-        assert_eq!(reg.discover_by_tier(ServiceTier::Tier3).len(), 3);
+        assert_eq!(reg.discover_by_tier(ServiceTier::Tier3).len(), 2); // library-agent removed
         assert_eq!(reg.discover_by_tier(ServiceTier::Tier4).len(), 2);
         assert_eq!(reg.discover_by_tier(ServiceTier::Tier5).len(), 2);
     }
@@ -1203,8 +1203,10 @@ mod tests {
         let _ = register_ultraplate_services(&reg);
         let ct = reg.contribute();
 
-        // D0: 12/12 = 1.0
-        assert!((ct.tensor.to_array()[0] - 1.0).abs() < f64::EPSILON);
+        // D0: 11/12.0 ≈ 0.917 (12.0 is normalization ceiling, library-agent removed)
+        #[allow(clippy::cast_precision_loss)]
+        let expected_d0 = 11.0 / 12.0;
+        assert!((ct.tensor.to_array()[0] - expected_d0).abs() < 1e-10);
 
         // D2: average tier should be > 0
         assert!(ct.tensor.to_array()[2] > 0.0);
@@ -1243,8 +1245,10 @@ mod tests {
         let _ = reg.update_health("tool-library", HealthStatus::Healthy);
 
         let ct = reg.contribute();
+        #[allow(clippy::cast_precision_loss)]
+        let expected_d4 = 6.0 / 11.0; // 6 healthy out of 11 services (library-agent removed)
         let d4 = ct.tensor.to_array()[4]; // D4: healthy ratio
-        assert!((d4 - 0.5).abs() < f64::EPSILON);
+        assert!((d4 - expected_d4).abs() < 1e-10);
     }
 
     #[test]
