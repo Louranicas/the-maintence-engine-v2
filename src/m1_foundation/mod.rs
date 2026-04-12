@@ -107,6 +107,23 @@ pub use logging::{
 // Re-export shared types (M00: Shared Types)
 pub use shared_types::{AgentId, CoverageBitmap, DimensionIndex, HealthReport, ModuleId, Timestamp};
 
+/// Frozen identity anchor for 12D tensor dimension D1 (port).
+///
+/// Computed as `8080.0 / 65535.0 ≈ 0.1232`. This is **NOT** the live bind
+/// port — `MEv2` binds on :8180 per `devenv.toml` since Session 081 retired V1.
+/// D1 is a normalized port-identity hash that seeds `RALPH`'s fitness
+/// comparisons and persists across 18,310+ rows in `tensor_memory.db`.
+///
+/// **Do not rebaseline.** Re-computing against :8180 would orphan every
+/// historical fitness delta and bias mutation-effectiveness scoring at the
+/// cutover generation. If a live-port dimension is ever needed, add a new
+/// dim rather than modifying this anchor.
+///
+/// History: frozen Session 097 following Circle-of-Experts deliberation
+/// (`RALPH` `Historian` + `Test` `Archeologist` + `Safety` `Auditor` + `MEv2`
+/// `Architect` + `Runtime` `Operator` voted freeze, 5/6).
+pub const ME_IDENTITY_PORT_ANCHOR: f64 = 8080.0 / 65535.0;
+
 // Re-export signal types (M07: Signal Bus)
 pub use signals::{
     DissentEvent, HealthSignal, LearningEvent, Signal, SignalBus, SignalBusConfig, SignalBusStats,
@@ -1288,7 +1305,8 @@ mod tests {
         let config = Config::default();
         let tensor = config.to_tensor();
         assert!(tensor.validate().is_ok());
-        // D1 = port/65535 = 8080/65535 ≈ 0.1232
+        // Config::to_tensor().port tracks config.port live; D1 in engine.rs is
+        // frozen at ME_IDENTITY_PORT_ANCHOR. Different tensors, different purposes.
         assert!(tensor.port > 0.0);
         assert!(tensor.port < 1.0);
     }

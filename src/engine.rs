@@ -27,7 +27,7 @@
 //! - [Implementation Plan](../terms%20of%20reference/implementation_plan/INDEX.md)
 
 use crate::m1_foundation::shared_types::DimensionIndex;
-use crate::m1_foundation::TensorContributor;
+use crate::m1_foundation::{TensorContributor, ME_IDENTITY_PORT_ANCHOR};
 use crate::m2_services::{
     CircuitBreakerRegistry, HealthMonitor, HealthMonitoring, HealthProbeBuilder, LifecycleManager,
     LifecycleOps, RestartConfig, ServiceDefinitionBuilder, ServiceDiscovery, ServiceRegistry,
@@ -957,7 +957,7 @@ impl Engine {
     /// - **`CircuitBreakerRegistry`** (M12): D9 (closed fraction), D10 (failure rate)
     ///
     /// **Non-L2 dimensions** (manual calculation):
-    /// - D1 (port): static 8080/65535
+    /// - D1 (port): frozen identity anchor — see `ME_IDENTITY_PORT_ANCHOR`
     /// - D5 (protocol): static 3/4 (REST + gRPC + WebSocket)
     /// - D8 (synergy): L4 bridge manager
     /// - D11 (temporal): L5 learning + L3 pipeline activity
@@ -999,8 +999,11 @@ impl Engine {
 
         // -- Non-L2 dimensions --
 
-        // D1: port (static — no L2 contributor covers this)
-        let d1_port = 8080.0 / 65535.0;
+        // D1: port identity anchor — FROZEN at 8080.0/65535.0 (see ME_IDENTITY_PORT_ANCHOR).
+        // This is NOT the live bind port (that's 8180 via devenv.toml). D1 is a
+        // normalized identity hash seeded S081; 18,310+ tensor_memory rows depend
+        // on this value. Do not rebaseline — add a new dim for live-port tracking.
+        let d1_port = ME_IDENTITY_PORT_ANCHOR;
 
         // D5: protocol diversity (ME exposes REST + gRPC + WebSocket = 3/4)
         let d5_protocol = 3.0 / 4.0;
