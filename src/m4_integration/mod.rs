@@ -20,14 +20,13 @@
 //! | SYNTHEX | 8090/8091 | REST/WS | 1 |
 //! | SAN-K7 | 8100 | REST/IPC | 1 |
 //! | NAIS | 8101 | REST | 2 |
-//! | `CodeSynthor` V7 | 8110 | REST/WS | 2 |
-//! | DevOps Engine | 8081 | REST | 2 |
-//! | Tool Library | 8105 | REST | 3 |
 //! | CCM | 8104 | REST | 3 |
-//! | Prometheus Swarm | 10001+ | REST | 4 |
-//! | Architect Agent | 9001+ | REST | 4 |
 //! | Bash Engine | 8102 | REST/IPC | 5 |
 //! | Tool Maker | 8103 | REST/gRPC | 5 |
+//!
+//! Retired (do not re-add): `CodeSynthor` V7 :8110 (S091), `DevOps` V2 :8081 (S091),
+//! `Tool` `Library` V1 :8105 (S093), `Prometheus` `Swarm` V1 :10001 (S088),
+//! `Architect` `Agent` :9001 (S093), `library-agent` :8083 (S093).
 //!
 //! ## Related Documentation
 //! - [Layer Specification](../../ai_docs/layers/L04_INTEGRATION.md)
@@ -186,40 +185,10 @@ pub fn default_endpoints() -> Vec<ServiceEndpoint> {
             retry_enabled: true,
             max_retries: 3,
         },
-        ServiceEndpoint {
-            service_id: "codesynthor-v7".into(),
-            host: "localhost".into(),
-            port: 8110,
-            protocol: WireProtocol::Rest,
-            health_path: "/health".into(),
-            base_path: "/api".into(),
-            timeout_ms: 50000,
-            retry_enabled: true,
-            max_retries: 3,
-        },
-        ServiceEndpoint {
-            service_id: "devops-engine".into(),
-            host: "localhost".into(),
-            port: 8081,
-            protocol: WireProtocol::Rest,
-            health_path: "/health".into(),
-            base_path: "/api".into(),
-            timeout_ms: 50000,
-            retry_enabled: true,
-            max_retries: 3,
-        },
+        // codesynthor-v7 (8110) retired S091 — superseded by V8 (8111)
+        // devops-engine V2 (8081) retired S091 — superseded by V3 (8082)
         // Tier 3: Integration
-        ServiceEndpoint {
-            service_id: "tool-library".into(),
-            host: "localhost".into(),
-            port: 8105,
-            protocol: WireProtocol::Rest,
-            health_path: "/health".into(),
-            base_path: "/api".into(),
-            timeout_ms: 100_000,
-            retry_enabled: true,
-            max_retries: 3,
-        },
+        // tool-library V1 (8105) retired S093 — superseded by V2 hb binary (CLI, no port)
         // library-agent (8083) removed: disabled in devenv, was dragging fitness tensor
         ServiceEndpoint {
             service_id: "ccm".into(),
@@ -280,9 +249,7 @@ pub fn default_wire_weights() -> Vec<WireWeight> {
         WireWeight { source: "maintenance-engine".into(), target: "synthex".into(), weight: 1.5, latency_slo_ms: 10, error_budget: 0.001 },
         WireWeight { source: "maintenance-engine".into(), target: "san-k7".into(), weight: 1.5, latency_slo_ms: 10, error_budget: 0.001 },
         WireWeight { source: "maintenance-engine".into(), target: "nais".into(), weight: 1.3, latency_slo_ms: 50, error_budget: 0.005 },
-        WireWeight { source: "maintenance-engine".into(), target: "codesynthor-v7".into(), weight: 1.3, latency_slo_ms: 50, error_budget: 0.005 },
-        WireWeight { source: "maintenance-engine".into(), target: "devops-engine".into(), weight: 1.3, latency_slo_ms: 50, error_budget: 0.005 },
-        WireWeight { source: "maintenance-engine".into(), target: "tool-library".into(), weight: 1.2, latency_slo_ms: 100, error_budget: 0.01 },
+        // codesynthor-v7 / devops-engine / tool-library wire weights removed S097 (retired services)
         WireWeight { source: "maintenance-engine".into(), target: "ccm".into(), weight: 1.2, latency_slo_ms: 100, error_budget: 0.01 },
         // library-agent wire weight removed (disabled service)
         WireWeight { source: "maintenance-engine".into(), target: "bash-engine".into(), weight: 1.0, latency_slo_ms: 500, error_budget: 0.02 },
@@ -304,7 +271,7 @@ mod tests {
     #[test]
     fn test_default_endpoints() {
         let endpoints = default_endpoints();
-        assert!(endpoints.len() >= 9); // 9 after library-agent removal
+        assert!(endpoints.len() >= 6); // 6 after library-agent + 3 retired-service removals
         assert!(endpoints.iter().any(|e| e.service_id == "synthex"));
     }
 

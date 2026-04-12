@@ -725,13 +725,13 @@ pub fn register_ultraplate_services(registry: &dyn ServiceDiscovery) -> Result<(
     register_service(registry, "synthex", "SYNTHEX Engine", "1.0.0", ServiceTier::Tier1, "localhost", 8090, "REST", "/api/health")?;
     register_service(registry, "san-k7", "SAN-K7 Orchestrator", "1.55.0", ServiceTier::Tier1, "localhost", 8100, "REST", "/health")?;
     register_service(registry, "nais", "NAIS", "1.0.0", ServiceTier::Tier2, "localhost", 8101, "REST", "/health")?;
-    register_service(registry, "codesynthor-v7", "CodeSynthor V7", "7.3.0", ServiceTier::Tier2, "localhost", 8110, "REST", "/health")?;
-    register_service(registry, "devops-engine", "DevOps Engine", "2.0.0", ServiceTier::Tier2, "localhost", 8081, "REST", "/health")?;
-    register_service(registry, "tool-library", "Tool Library", "1.0.0", ServiceTier::Tier3, "localhost", 8105, "REST", "/health")?;
+    // codesynthor-v7 (8110) retired S091 — superseded by V8 (8111)
+    // devops-engine V2 (8081) retired S091 — superseded by V3 (8082)
+    // tool-library V1 (8105) retired S093 — superseded by V2 hb binary (CLI, no port)
     // library-agent (8083) removed: disabled in devenv, was dragging fitness tensor
     register_service(registry, "ccm", "Claude Context Manager", "1.0.0", ServiceTier::Tier3, "localhost", 8104, "REST", "/health")?;
-    register_service(registry, "prometheus-swarm", "Prometheus Swarm", "1.0.0", ServiceTier::Tier4, "localhost", 10001, "REST", "/health")?;
-    register_service(registry, "architect-agent", "Architect Agent", "1.0.0", ServiceTier::Tier4, "localhost", 9001, "REST", "/health")?;
+    // prometheus-swarm V1 (10001) retired S088 — superseded by V2 (10002)
+    // architect-agent (9001) retired S093 — absorbed by V2 + V8
     register_service(registry, "bash-engine", "Bash Engine", "1.0.0", ServiceTier::Tier5, "localhost", 8102, "REST", "/health")?;
     register_service(registry, "tool-maker", "Tool Maker", "1.55.0", ServiceTier::Tier5, "localhost", 8103, "REST", "/health")?;
 
@@ -1061,12 +1061,11 @@ mod tests {
         let reg = ServiceRegistry::new();
         let result = register_ultraplate_services(&reg);
         assert!(result.is_ok());
-        assert_eq!(reg.service_count(), 11); // library-agent removed
+        assert_eq!(reg.service_count(), 6); // 5 retired services dropped + library-agent removed
         assert!(reg.is_registered("synthex"));
         assert!(reg.is_registered("san-k7"));
         assert!(reg.is_registered("bash-engine"));
         assert!(reg.is_registered("tool-maker"));
-        assert!(reg.is_registered("prometheus-swarm"));
     }
 
     #[test]
@@ -1075,9 +1074,9 @@ mod tests {
         let _ = register_ultraplate_services(&reg);
 
         assert_eq!(reg.discover_by_tier(ServiceTier::Tier1).len(), 2);
-        assert_eq!(reg.discover_by_tier(ServiceTier::Tier2).len(), 3);
-        assert_eq!(reg.discover_by_tier(ServiceTier::Tier3).len(), 2); // library-agent removed
-        assert_eq!(reg.discover_by_tier(ServiceTier::Tier4).len(), 2);
+        assert_eq!(reg.discover_by_tier(ServiceTier::Tier2).len(), 1); // codesynthor-v7, devops-engine retired
+        assert_eq!(reg.discover_by_tier(ServiceTier::Tier3).len(), 1); // tool-library retired, library-agent removed
+        assert_eq!(reg.discover_by_tier(ServiceTier::Tier4).len(), 0); // prometheus-swarm, architect-agent retired
         assert_eq!(reg.discover_by_tier(ServiceTier::Tier5).len(), 2);
     }
 
@@ -1203,9 +1202,9 @@ mod tests {
         let _ = register_ultraplate_services(&reg);
         let ct = reg.contribute();
 
-        // D0: 11/12.0 ≈ 0.917 (12.0 is normalization ceiling, library-agent removed)
+        // D0: 6/12.0 = 0.5 (12.0 normalization ceiling; library-agent + 5 retired services removed)
         #[allow(clippy::cast_precision_loss)]
-        let expected_d0 = 11.0 / 12.0;
+        let expected_d0 = 6.0 / 12.0;
         assert!((ct.tensor.to_array()[0] - expected_d0).abs() < 1e-10);
 
         // D2: average tier should be > 0
@@ -1236,17 +1235,14 @@ mod tests {
     fn test_tensor_healthy_ratio() {
         let reg = ServiceRegistry::new();
         let _ = register_ultraplate_services(&reg);
-        // Mark half as healthy
+        // Mark half as healthy (3 of 6 active services)
         let _ = reg.update_health("synthex", HealthStatus::Healthy);
         let _ = reg.update_health("san-k7", HealthStatus::Healthy);
         let _ = reg.update_health("nais", HealthStatus::Healthy);
-        let _ = reg.update_health("codesynthor-v7", HealthStatus::Healthy);
-        let _ = reg.update_health("devops-engine", HealthStatus::Healthy);
-        let _ = reg.update_health("tool-library", HealthStatus::Healthy);
 
         let ct = reg.contribute();
         #[allow(clippy::cast_precision_loss)]
-        let expected_d4 = 6.0 / 11.0; // 6 healthy out of 11 services (library-agent removed)
+        let expected_d4 = 3.0 / 6.0; // 3 healthy out of 6 active services post-S097 cleanup
         let d4 = ct.tensor.to_array()[4]; // D4: healthy ratio
         assert!((d4 - expected_d4).abs() < 1e-10);
     }

@@ -404,7 +404,7 @@ mod tests {
         let client = RestClient::new();
         let count = client.endpoint_count();
         // All default endpoints are REST protocol
-        assert!(count >= 8, "expected at least 8 REST endpoints, got {count}");
+        assert!(count >= 6, "expected at least 6 REST endpoints, got {count}");
         // Verify a known endpoint is present
         assert!(client.get_endpoint("synthex").is_ok());
     }

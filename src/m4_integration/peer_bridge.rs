@@ -629,34 +629,9 @@ pub fn default_peer_configs() -> Vec<PeerConfig> {
             weight: 1.3,
             poll_interval_secs: 30,
         },
-        PeerConfig {
-            service_id: "codesynthor-v7".into(),
-            host: "localhost".into(),
-            port: 8110,
-            health_path: "/health".into(),
-            tier: 2,
-            weight: 1.3,
-            poll_interval_secs: 30,
-        },
-        PeerConfig {
-            service_id: "devops-engine".into(),
-            host: "localhost".into(),
-            port: 8081,
-            health_path: "/health".into(),
-            tier: 2,
-            weight: 1.3,
-            poll_interval_secs: 30,
-        },
+        // codesynthor-v7 (8110) / devops-engine V2 (8081) retired S091
         // Tier 3: Integration (30s polling)
-        PeerConfig {
-            service_id: "tool-library".into(),
-            host: "localhost".into(),
-            port: 8105,
-            health_path: "/health".into(),
-            tier: 3,
-            weight: 1.2,
-            poll_interval_secs: 30,
-        },
+        // tool-library V1 (8105) retired S093
         PeerConfig {
             service_id: "ccm".into(),
             host: "localhost".into(),
@@ -668,24 +643,7 @@ pub fn default_peer_configs() -> Vec<PeerConfig> {
         },
         // library-agent (8083) removed: disabled in devenv, was dragging fitness tensor
         // Tier 4: Orchestration (60s polling)
-        PeerConfig {
-            service_id: "prometheus-swarm".into(),
-            host: "localhost".into(),
-            port: 10001,
-            health_path: "/health".into(),
-            tier: 4,
-            weight: 1.1,
-            poll_interval_secs: 60,
-        },
-        PeerConfig {
-            service_id: "architect-agent".into(),
-            host: "localhost".into(),
-            port: 9001,
-            health_path: "/health".into(),
-            tier: 4,
-            weight: 1.1,
-            poll_interval_secs: 60,
-        },
+        // prometheus-swarm V1 (10001) retired S088 / architect-agent (9001) retired S093
         // Tier 5: Execution (60s polling)
         PeerConfig {
             service_id: "bash-engine".into(),
@@ -723,7 +681,7 @@ mod tests {
     #[test]
     fn test_default_peer_count() {
         let manager = PeerBridgeManager::new().expect("create manager");
-        assert_eq!(manager.peer_count(), 11); // library-agent removed
+        assert_eq!(manager.peer_count(), 6); // 5 retired + library-agent removed
     }
 
     #[test]
@@ -785,9 +743,9 @@ mod tests {
     }
 
     #[test]
-    fn test_default_peer_configs_has_11() {
+    fn test_default_peer_configs_has_6() {
         let configs = default_peer_configs();
-        assert_eq!(configs.len(), 11); // library-agent removed
+        assert_eq!(configs.len(), 6); // 5 retired + library-agent removed
     }
 
     #[test]
@@ -949,7 +907,7 @@ mod tests {
     fn test_all_states_returns_all_peers() {
         let manager = PeerBridgeManager::new().expect("create manager");
         let states = manager.all_states();
-        assert_eq!(states.len(), 11); // library-agent removed
+        assert_eq!(states.len(), 6); // 5 retired + library-agent removed
     }
 
     #[test]
@@ -970,7 +928,7 @@ mod tests {
     fn test_mesh_summary_structure() {
         let manager = PeerBridgeManager::new().expect("create manager");
         let summary = manager.mesh_summary();
-        assert_eq!(summary.total_peers, 11); // library-agent removed
+        assert_eq!(summary.total_peers, 6); // 5 retired + library-agent removed
         assert_eq!(summary.reachable_peers, 0);
         assert_eq!(summary.circuit_open_count, 0);
     }
@@ -1139,13 +1097,14 @@ mod tests {
     }
 
     #[test]
-    fn test_default_configs_cover_all_tiers() {
+    fn test_default_configs_cover_active_tiers() {
+        // Tier 4 peers (prometheus-swarm V1, architect-agent) retired S088/S093;
+        // povm/rm/pv2/orac live in the service_registry layer, not peer_bridge.
         let configs = default_peer_configs();
         let tiers: std::collections::HashSet<u8> = configs.iter().map(|c| c.tier).collect();
         assert!(tiers.contains(&1));
         assert!(tiers.contains(&2));
         assert!(tiers.contains(&3));
-        assert!(tiers.contains(&4));
         assert!(tiers.contains(&5));
     }
 

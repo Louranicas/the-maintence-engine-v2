@@ -441,24 +441,19 @@ fn spawn_health_polling(state: &Arc<AppState>) {
             let mut healthy = 0_u32;
             let mut total_checked = 0_u32;
 
-            // Get all probe endpoints — V2: includes memory/coordination/ORAC tier
-            let services: [(&str, &str); 16] = [
-                ("devops-engine",    "http://localhost:8081/health"),
+            // Get all probe endpoints — active services only (5 retired services dropped S097)
+            let services: [(&str, &str); 11] = [
                 ("synthex",          "http://localhost:8090/api/health"),
                 ("san-k7",           "http://localhost:8100/health"),
                 ("nais",             "http://localhost:8101/health"),
                 ("bash-engine",      "http://localhost:8102/health"),
                 ("tool-maker",       "http://localhost:8103/health"),
                 ("ccm",              "http://localhost:8104/health"),
-                ("tool-library",     "http://localhost:8105/health"),
-                ("codesynthor-v7",   "http://localhost:8110/health"),
                 ("vortex-memory",    "http://localhost:8120/health"),
                 ("povm-engine",      "http://localhost:8125/health"),
                 ("reasoning-memory", "http://localhost:8130/health"),
                 ("pane-vortex",      "http://localhost:8132/health"),
                 ("orac-sidecar",     "http://localhost:8133/health"),
-                ("architect-agent",  "http://localhost:9001/health"),
-                ("prometheus-swarm", "http://localhost:10001/health"),
             ];
 
             for &(service_id, url) in &services {
@@ -3007,13 +3002,9 @@ async fn handle_services(
                 service_entry("synthex", "SYNTHEX Engine", 8090, 1, 1.5),
                 service_entry("san-k7-orchestrator", "SAN-K7 Orchestrator", 8100, 1, 1.5),
                 service_entry("nais", "NAIS", 8101, 2, 1.3),
-                service_entry("codesynthor-v7", "CodeSynthor V7", 8110, 2, 1.3),
-                service_entry("devops-engine", "DevOps Engine", 8081, 2, 1.3),
-                service_entry("tool-library", "Tool Library", 8105, 3, 1.2),
-                // library-agent (8083) removed: disabled in devenv, was dragging fitness tensor
+                // codesynthor-v7 / devops-engine V2 / tool-library V1 / library-agent retired
                 service_entry("ccm", "Claude Context Manager", 8104, 3, 1.2),
-                service_entry("prometheus-swarm", "Prometheus Swarm", 10001, 4, 1.1),
-                service_entry("architect-agent", "Architect Agent", 9001, 4, 1.1),
+                // prometheus-swarm V1 / architect-agent retired
                 service_entry("bash-engine", "Bash Engine", 8102, 5, 1.0),
                 service_entry("tool-maker", "Tool Maker", 8103, 5, 1.0),
             ]
