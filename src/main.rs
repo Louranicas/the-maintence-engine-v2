@@ -1,7 +1,7 @@
 //! # The Maintenance Engine - ULTRAPLATE Service
 //!
 //! Axum HTTP server providing REST API for the Maintenance Engine.
-//! Part of the ULTRAPLATE Bulletproof Developer Environment (Port 8080).
+//! Part of the ULTRAPLATE Bulletproof Developer Environment (Port 8180).
 //!
 //! ## Endpoints
 //!
@@ -19,7 +19,7 @@
 //! ## Usage
 //!
 //! ```bash
-//! maintenance_engine start                  # Default port 8080
+//! maintenance_engine start                  # Default port 8180
 //! maintenance_engine start --port 9000      # Custom port
 //! maintenance_engine health                 # CLI health check
 //! maintenance_engine status                 # CLI status
@@ -56,7 +56,10 @@ use tower_http::trace::TraceLayer;
 // ---------------------------------------------------------------------------
 
 /// Default REST API port.
-const DEFAULT_PORT: u16 = 8080;
+///
+/// Matches `devenv.toml` which always launches MEv2 with `--port 8180`.
+/// ME V1 (:8080) was retired in Session 081; this constant was stale until S097.
+const DEFAULT_PORT: u16 = 8180;
 
 /// Service version.
 const VERSION: &str = "1.0.0";

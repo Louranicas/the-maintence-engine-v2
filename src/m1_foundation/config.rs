@@ -114,7 +114,7 @@ pub struct Config {
     pub host: String,
 
     /// REST API port.
-    /// Default: `8080`
+    /// Default: `8180` (ME V1 :8080 retired S081).
     /// Env: `ME_PORT`
     #[serde(default = "default_port")]
     pub port: u16,
@@ -150,7 +150,7 @@ fn default_host() -> String {
 }
 
 const fn default_port() -> u16 {
-    8080
+    8180
 }
 
 const fn default_grpc_port() -> u16 {
@@ -946,7 +946,7 @@ mod tests {
     fn test_config_defaults() {
         let config = Config::defaults();
         assert_eq!(config.host, "0.0.0.0");
-        assert_eq!(config.port, 8080);
+        assert_eq!(config.port, 8180);
         assert_eq!(config.grpc_port, 8081);
         assert_eq!(config.ws_port, 8082);
         assert_eq!(config.database_path, "data/maintenance.db");
@@ -988,8 +988,8 @@ mod tests {
     #[test]
     fn test_config_validation_port_conflict() {
         let config = Config {
-            port: 8080,
-            grpc_port: 8080,
+            port: 8180,
+            grpc_port: 8180,
             ..Config::defaults()
         };
         let result = config.validate();
@@ -1018,7 +1018,7 @@ mod tests {
             .skip_files()
             .skip_env()
             .build()?;
-        assert_eq!(config.port, 8080);
+        assert_eq!(config.port, 8180);
         Ok(())
     }
 
@@ -1054,7 +1054,7 @@ mod tests {
         let result = ConfigBuilder::new()
             .skip_files()
             .host("original-host")
-            .port(8080)
+            .port(8180)
             .build();
 
         // Clean up environment before asserting so they are always removed
@@ -1139,7 +1139,7 @@ level = "debug"
         let default_content = r#"
 [server]
 host = "0.0.0.0"
-port = 8080
+port = 8180
 grpc_port = 8081
 websocket_port = 8082
 
@@ -1255,7 +1255,7 @@ level = "trace"
         let result = <ConfigManager as ConfigProvider>::reload(&manager);
         // Whether it succeeds or fails, the previous config must still be readable
         let still_valid = manager.get();
-        assert_eq!(still_valid.port, 8080);
+        assert_eq!(still_valid.port, 8180);
         // Suppress unused-result lint — we intentionally discard either arm here
         drop(result);
     }
@@ -1411,7 +1411,7 @@ level = "trace"
             .build()?;
 
         assert_eq!(config.host, "192.168.0.1");
-        assert_eq!(config.port, 8080);
+        assert_eq!(config.port, 8180);
         assert_eq!(config.grpc_port, 8081);
         assert_eq!(config.ws_port, 8082);
         Ok(())
@@ -1445,7 +1445,7 @@ level = "trace"
             .build()?;
 
         // File port 1234 must NOT have been applied
-        assert_eq!(config.port, 8080);
+        assert_eq!(config.port, 8180);
         Ok(())
     }
 
@@ -1586,7 +1586,7 @@ level = "trace"
             .map_err(|e| Error::Config(format!("json deserialize: {e}")))?;
 
         assert_eq!(config.host, "partial-host");
-        assert_eq!(config.port, 8080);
+        assert_eq!(config.port, 8180);
         assert_eq!(config.grpc_port, 8081);
         assert_eq!(config.ws_port, 8082);
         Ok(())
@@ -1639,7 +1639,7 @@ level = "trace"
 
         // Should succeed with the default port since the env var was invalid
         let config = result?;
-        assert_eq!(config.port, 8080);
+        assert_eq!(config.port, 8180);
         Ok(())
     }
 
@@ -1719,7 +1719,7 @@ level = "trace"
             .build()?;
 
         // Default port must be in effect
-        assert_eq!(config.port, 8080);
+        assert_eq!(config.port, 8180);
         Ok(())
     }
 
@@ -1799,15 +1799,15 @@ level = "trace"
 
     #[test]
     fn test_config_to_tensor_port_mapping() {
-        let config = Config::default(); // port 8080
+        let config = Config::default(); // port 8180 (post-S097 migration)
         let tensor = config.to_tensor();
-        let expected_port = 8080.0 / 65535.0;
+        let expected_port = 8180.0 / 65535.0;
         assert!((tensor.port - expected_port).abs() < 0.001);
     }
 
     #[test]
     fn test_config_to_tensor_distance() {
-        let c1 = Config::default(); // port 8080
+        let c1 = Config::default(); // port 8180
         let mut c2 = Config::default();
         c2.port = 9090;
         let t1 = c1.to_tensor();
@@ -1857,7 +1857,7 @@ level = "trace"
                         let result = p.get();
                         assert!(result.is_ok());
                         if let Ok(c) = result {
-                            assert_eq!(c.port, 8080);
+                            assert_eq!(c.port, 8180);
                         }
                     }
                 })

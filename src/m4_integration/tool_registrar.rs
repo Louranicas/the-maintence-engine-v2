@@ -319,7 +319,7 @@ impl ToolRegistrationEntry {
 /// ```rust,no_run
 /// # use maintenance_engine::m4_integration::tool_registrar::ToolRegistrar;
 /// # async fn example() -> maintenance_engine::Result<()> {
-/// let registrar = ToolRegistrar::new(8080)?;
+/// let registrar = ToolRegistrar::new(8180)?;
 /// let count = registrar.register_all().await?;
 /// let report = registrar.registration_report();
 /// assert!(report.all_registered());
@@ -717,16 +717,16 @@ mod tests {
 
     #[test]
     fn test_new_creates_registrar() {
-        let registrar = ToolRegistrar::new(8080);
+        let registrar = ToolRegistrar::new(8180);
         assert!(registrar.is_ok());
     }
 
     #[test]
     fn test_new_with_default_port() {
-        let registrar = ToolRegistrar::new(8080);
+        let registrar = ToolRegistrar::new(8180);
         assert!(registrar.is_ok());
         let r = create_test_registrar();
-        assert_eq!(r.service_port(), 8080);
+        assert_eq!(r.service_port(), 8180);
     }
 
     #[test]
@@ -744,7 +744,7 @@ mod tests {
     #[test]
     fn test_service_port_stored() {
         let r = create_test_registrar();
-        assert_eq!(r.service_port(), 8080);
+        assert_eq!(r.service_port(), 8180);
     }
 
     #[test]
@@ -990,7 +990,7 @@ mod tests {
     fn test_build_payload_port() {
         let r = create_test_registrar();
         let payload = r.build_payload();
-        assert_eq!(payload.port, 8080);
+        assert_eq!(payload.port, 8180);
     }
 
     #[test]
@@ -1202,13 +1202,13 @@ mod tests {
 
     /// Create a test registrar on the default port.
     fn create_test_registrar() -> ToolRegistrar {
-        ToolRegistrar::new(8080).unwrap_or_else(|_| {
+        ToolRegistrar::new(8180).unwrap_or_else(|_| {
             // Fallback: should never happen as reqwest::Client::new() rarely fails
             ToolRegistrar {
                 http_client: reqwest::Client::new(),
                 registration_status: RwLock::new(Vec::new()),
                 is_registered: AtomicBool::new(false),
-                service_port: 8080,
+                service_port: 8180,
             }
         })
     }

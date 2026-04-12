@@ -730,16 +730,17 @@ mod tests {
 
     #[test]
     fn test_peer_config_health_url() {
+        // Fixture port 9090 — neither active nor retired; validates formatting only.
         let config = PeerConfig {
             service_id: "test".into(),
             host: "localhost".into(),
-            port: 8080,
+            port: 9090,
             health_path: "/api/health".into(),
             tier: 1,
             weight: 1.0,
             poll_interval_secs: 15,
         };
-        assert_eq!(config.health_url(), "http://localhost:8080/api/health");
+        assert_eq!(config.health_url(), "http://localhost:9090/api/health");
     }
 
     #[test]
@@ -1015,10 +1016,11 @@ mod tests {
 
     #[test]
     fn test_peer_config_serialization() {
+        // Fixture port 9090 — neither active nor retired; validates serde shape only.
         let config = PeerConfig {
             service_id: "test".into(),
             host: "localhost".into(),
-            port: 8080,
+            port: 9090,
             health_path: "/health".into(),
             tier: 1,
             weight: 1.0,

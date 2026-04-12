@@ -350,7 +350,7 @@ mod tests {
     fn test_config_default_all_fields() {
         let config = Config::default();
         assert_eq!(config.host, "0.0.0.0");
-        assert_eq!(config.port, 8080);
+        assert_eq!(config.port, 8180);
         assert_eq!(config.grpc_port, 8081);
         assert_eq!(config.ws_port, 8082);
         assert_eq!(config.database_path, "data/maintenance.db");
@@ -393,7 +393,7 @@ mod tests {
     fn test_config_debug_output() {
         let config = Config::default();
         let debug = format!("{config:?}");
-        assert!(debug.contains("8080"));
+        assert!(debug.contains("8180"));
         assert!(debug.contains("0.0.0.0"));
     }
 
@@ -484,7 +484,7 @@ mod tests {
             changed_keys: vec!["port".to_string(), "host".to_string()],
             previous: {
                 let mut m = std::collections::HashMap::new();
-                m.insert("port".to_string(), "8080".to_string());
+                m.insert("port".to_string(), "8180".to_string());
                 m
             },
             new: {
@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(event.change_id, "chg-001");
         assert_eq!(event.changed_keys.len(), 2);
         assert!(event.changed_keys.contains(&"port".to_string()));
-        assert_eq!(event.previous.get("port").map(String::as_str), Some("8080"));
+        assert_eq!(event.previous.get("port").map(String::as_str), Some("8180"));
         assert_eq!(event.new.get("port").map(String::as_str), Some("9090"));
     }
 
@@ -964,7 +964,7 @@ mod tests {
     #[test]
     fn test_default_construction_sensible() {
         let config = Config::default();
-        assert_eq!(config.port, 8080);
+        assert_eq!(config.port, 8180);
 
         let log_config = LogConfig::default();
         assert_eq!(log_config.level, "info");
