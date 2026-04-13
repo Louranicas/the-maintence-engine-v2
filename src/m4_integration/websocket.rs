@@ -668,17 +668,13 @@ impl WebSocketClient {
 }
 
 /// Default WebSocket endpoints for ULTRAPLATE services.
+///
+/// **S099 F-07:** `codesynthor-v7` (:8110) removed — retired S091, superseded
+/// by V8 (:8111). V8 does not publish a WebSocket endpoint at this time;
+/// add back here if/when one is exposed.
 #[must_use]
 pub fn default_ws_endpoints() -> Vec<(String, String, u16, String)> {
-    vec![
-        ("synthex".into(), "localhost".into(), 8091, "/ws".into()),
-        (
-            "codesynthor-v7".into(),
-            "localhost".into(),
-            8110,
-            "/ws/build".into(),
-        ),
-    ]
+    vec![("synthex".into(), "localhost".into(), 8091, "/ws".into())]
 }
 
 // ---------------------------------------------------------------------------
@@ -985,8 +981,14 @@ mod tests {
     #[test]
     fn test_default_ws_endpoints() {
         let endpoints = default_ws_endpoints();
-        assert!(endpoints.len() >= 2);
+        // S099 F-07: codesynthor-v7 (:8110) removed after retirement S091.
+        // synthex remains the only default WS endpoint until V8 exposes one.
+        assert!(!endpoints.is_empty());
         assert!(endpoints.iter().any(|(id, _, _, _)| id == "synthex"));
+        assert!(
+            endpoints.iter().all(|(id, _, _, _)| id != "codesynthor-v7"),
+            "retired codesynthor-v7 must not be in default endpoints"
+        );
     }
 
     #[test]

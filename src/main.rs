@@ -57,7 +57,7 @@ use tower_http::trace::TraceLayer;
 
 /// Default REST API port.
 ///
-/// Matches `devenv.toml` which always launches MEv2 with `--port 8180`.
+/// Matches `devenv.toml` which always launches `MEv2` with `--port 8180`.
 /// ME V1 (:8080) was retired in Session 081; this constant was stale until S097.
 const DEFAULT_PORT: u16 = 8180;
 
@@ -100,10 +100,7 @@ struct AppState {
 /// Parses CLI arguments, initialises the engine, and starts the Axum server
 /// or runs a CLI subcommand.
 fn main() -> Result<()> {
-    // Install panic hook to log fatal panics before process abort
-    std::panic::set_hook(Box::new(|info| {
-        eprintln!("FATAL PANIC in maintenance-engine: {info}");
-    }));
+    install_panic_hook();
 
     let args: Vec<String> = env::args().collect();
     let is_server = args.get(1).map(String::as_str) == Some("start");
@@ -245,14 +242,20 @@ fn run_server_attempt(
 /// and periodic learning cycle.
 fn spawn_background_tasks(state: &Arc<AppState>) {
     spawn_observer_tick(state);
-    spawn_tool_registration(state);
+    // S099 F-04: Tool Library V1 (:8105) retired S093. V2 is a CLI binary with
+    // no port, so there is no registration target. Skipping prevents repeated
+    // connect failures and circuit-breaker pollution at startup.
+    // spawn_tool_registration(state);
     spawn_peer_polling(state);
     spawn_learning_cycle(state);
     spawn_thermal_polling(state);
     spawn_cascade_polling(state);
     spawn_decay_scheduler(state);
     spawn_health_polling(state);
-    spawn_devops_pipeline_trigger();
+    // S099 F-03: DevOps Engine V2 (:8081) retired S091. V3 (:8082) does not
+    // need an external pipeline trigger on startup. Skipping avoids a
+    // 30-second-delayed POST to a dead port on every boot.
+    // spawn_devops_pipeline_trigger();
     spawn_pv2_eventbus_bridge(state);
     spawn_orac_bridge_polling(state);
     spawn_field_tracking(state);
@@ -266,6 +269,11 @@ fn spawn_background_tasks(state: &Arc<AppState>) {
 ///
 /// After a 30s startup delay, POSTs a pipeline trigger to the DevOps Engine
 /// so it has at least one completed pipeline on first health check.
+///
+/// **S099:** no longer called. DevOps V2 (:8081) was retired S091. Retained
+/// behind `#[allow(dead_code)]` for historical reference — delete after
+/// confirming no V3 parity replacement is wanted.
+#[allow(dead_code)]
 fn spawn_devops_pipeline_trigger() {
     tokio::spawn(async {
         tokio::time::sleep(Duration::from_secs(30)).await;
@@ -1740,6 +1748,7 @@ fn tensor_hash(tensor: &maintenance_engine_v2::Tensor12D) -> String {
 }
 
 /// Spawn tool library registration (one-shot after startup).
+#[allow(dead_code)]
 fn spawn_tool_registration(state: &Arc<AppState>) {
     let tool_port = state.port;
     tokio::spawn(async move {
@@ -4226,6 +4235,42 @@ fn init_tracing_stderr() -> Result<()> {
 /// When started by a process manager like devenv, stdout/stderr are piped.
 /// If the manager exits, the pipe closes and any write triggers SIGPIPE,
 /// killing the server. Writing to a file avoids this entirely.
+/// Install a file-only panic hook (S098a / S099 F-01 pattern).
+///
+/// Writes to `/tmp/<pkg>-panic.log` instead of `stderr`. Under devenv,
+/// stderr can be closed by the parent after fork, and any write returns
+/// `EPIPE` — Rust's default stdio then panics at `stdio.rs:1165 "failed
+/// printing to stderr"`, and a hook that writes to stderr double-panics
+/// before the log is flushed. File append under `EPIPE` is harmless.
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let loc = info.location().map_or_else(
+            || "<unknown>".to_string(),
+            |l| format!("{}:{}:{}", l.file(), l.line(), l.column()),
+        );
+        let msg = info
+            .payload()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| {
+                info.payload()
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+            })
+            .unwrap_or("<non-string payload>");
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(concat!("/tmp/", env!("CARGO_PKG_NAME"), "-panic.log"))
+        {
+            use std::io::Write;
+            let ts = chrono::Utc::now().to_rfc3339();
+            let _ = writeln!(f, "[{ts}] FATAL PANIC at {loc}: {msg}");
+            let _ = f.flush();
+        }
+    }));
+}
+
 fn init_tracing_to_file() -> Result<()> {
     use std::fs;
     use tracing_subscriber::fmt::writer::MakeWriterExt;
