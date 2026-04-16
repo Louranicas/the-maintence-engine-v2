@@ -337,6 +337,11 @@ struct CircuitBreakerEntry {
     /// Monotonic instant for timeout computation (not chrono, not `SystemTime`).
     state_change_instant: Instant,
     state_history: Vec<CircuitStateTransition>,
+    /// F-05: Concurrent probe requests admitted while in `HalfOpen`.
+    /// Capped by `config.half_open_max_requests`. Decremented on
+    /// `record_success`/`record_failure`. Reset to 0 on state transition
+    /// away from `HalfOpen` and when entering `HalfOpen` from `Open`.
+    in_flight_probes: u32,
 }
 
 impl CircuitBreakerEntry {
@@ -354,6 +359,7 @@ impl CircuitBreakerEntry {
             last_state_change: Timestamp::now(),
             state_change_instant: Instant::now(),
             state_history: Vec::new(),
+            in_flight_probes: 0,
         }
     }
 
@@ -368,6 +374,9 @@ impl CircuitBreakerEntry {
         self.state = new_state;
         self.last_state_change = now;
         self.state_change_instant = Instant::now();
+        // F-05: Any state transition resets the in-flight probe count.
+        // Entering `HalfOpen` starts fresh at 0; leaving clears stale accounting.
+        self.in_flight_probes = 0;
     }
 
     fn is_open_timeout_elapsed(&self) -> bool {
@@ -549,6 +558,9 @@ impl CircuitBreakerOps for CircuitBreakerRegistry {
                     entry.failure_count = 0;
                 }
                 CircuitState::HalfOpen => {
+                    // F-05: Release one probe slot — this success represents the
+                    // outcome of a probe that `allow_request` admitted.
+                    entry.in_flight_probes = entry.in_flight_probes.saturating_sub(1);
                     entry.success_count += 1;
                     entry.consecutive_successes += 1;
                     if entry.consecutive_successes >= entry.config.success_threshold {
@@ -614,6 +626,8 @@ impl CircuitBreakerOps for CircuitBreakerRegistry {
                     }
                 }
                 CircuitState::HalfOpen => {
+                    // F-05: `transition_to` resets `in_flight_probes` to 0,
+                    // so no explicit decrement is required here.
                     entry.transition_to(
                         CircuitState::Open,
                         "Failure during HalfOpen probe".to_owned(),
@@ -651,7 +665,18 @@ impl CircuitBreakerOps for CircuitBreakerRegistry {
             .ok_or_else(|| Error::ServiceNotFound(service_id.to_owned()))?;
 
         let allowed = match entry.state {
-            CircuitState::Closed | CircuitState::HalfOpen => true,
+            CircuitState::Closed => true,
+            CircuitState::HalfOpen => {
+                // F-05: Admit at most `half_open_max_requests` concurrent probes.
+                // Additional callers are rejected until an outstanding probe
+                // completes via `record_success`/`record_failure`.
+                if entry.in_flight_probes < entry.config.half_open_max_requests {
+                    entry.in_flight_probes = entry.in_flight_probes.saturating_add(1);
+                    true
+                } else {
+                    false
+                }
+            }
             CircuitState::Open => {
                 if entry.is_open_timeout_elapsed() {
                     entry.transition_to(
@@ -660,7 +685,16 @@ impl CircuitBreakerOps for CircuitBreakerRegistry {
                     );
                     entry.success_count = 0;
                     entry.consecutive_successes = 0;
-                    true
+                    // F-05: Count this caller as the first probe since we
+                    // transitioned to HalfOpen in response to their request.
+                    if entry.in_flight_probes < entry.config.half_open_max_requests {
+                        entry.in_flight_probes = entry.in_flight_probes.saturating_add(1);
+                        true
+                    } else {
+                        // Edge case: half_open_max_requests == 0 (misconfig).
+                        // Treat as no probing allowed.
+                        false
+                    }
                 } else {
                     false
                 }
@@ -710,6 +744,9 @@ impl CircuitBreakerOps for CircuitBreakerRegistry {
         entry.failure_count = 0;
         entry.success_count = 0;
         entry.consecutive_successes = 0;
+        // F-05: Manual reset also clears any in-flight probe accounting even
+        // when already Closed (where `transition_to` would not fire).
+        entry.in_flight_probes = 0;
         drop(breakers);
         Ok(())
     }
@@ -2220,5 +2257,231 @@ mod tests {
         if let Err(e) = result {
             let _msg = format!("{e}");
         }
+    }
+
+    // ========================================================================
+    // F-05: `half_open_max_requests` concurrency cap enforcement
+    //
+    // Regression guard for Session 099 bug-hunt finding F-05:
+    // Prior to the fix, `allow_request` unconditionally admitted every caller
+    // while the breaker was in `HalfOpen`, ignoring `half_open_max_requests`.
+    // Under a still-flaky downstream this would burst all concurrent callers
+    // at the first probe window and almost certainly re-open the circuit.
+    // ========================================================================
+
+    /// Drive a breaker into `HalfOpen` by opening it then advancing past the
+    /// open-timeout. Uses `Duration::ZERO` so the next `allow_request` will
+    /// probe immediately.
+    fn make_halfopen(max_probes: u32, success_threshold: u32) -> CircuitBreakerRegistry {
+        let reg = CircuitBreakerRegistry::new();
+        let config = CircuitBreakerConfig::builder()
+            .failure_threshold(1)
+            .success_threshold(success_threshold)
+            .open_timeout(Duration::ZERO)
+            .half_open_max_requests(max_probes)
+            .build();
+        reg.register_breaker("svc", config).ok();
+        // Drive Closed -> Open via a single failure.
+        reg.record_failure("svc").ok();
+        assert_eq!(reg.get_state("svc").ok(), Some(CircuitState::Open));
+        reg
+    }
+
+    #[test]
+    fn f05_halfopen_admits_exactly_one_probe_by_default() {
+        // Default config: `half_open_max_requests = 1`.
+        // First `allow_request` transitions Open -> HalfOpen AND consumes the
+        // single probe slot. Second call must be rejected.
+        let reg = make_halfopen(1, 3);
+
+        assert_eq!(reg.allow_request("svc").ok(), Some(true), "first probe admitted");
+        assert_eq!(reg.get_state("svc").ok(), Some(CircuitState::HalfOpen));
+        assert_eq!(
+            reg.allow_request("svc").ok(),
+            Some(false),
+            "second probe MUST be rejected while first in-flight"
+        );
+    }
+
+    #[test]
+    fn f05_halfopen_admits_up_to_n_probes() {
+        // `half_open_max_requests = 3`: first three admitted, fourth rejected.
+        let reg = make_halfopen(3, 10);
+
+        assert_eq!(reg.allow_request("svc").ok(), Some(true));
+        assert_eq!(reg.get_state("svc").ok(), Some(CircuitState::HalfOpen));
+        assert_eq!(reg.allow_request("svc").ok(), Some(true));
+        assert_eq!(reg.allow_request("svc").ok(), Some(true));
+        assert_eq!(
+            reg.allow_request("svc").ok(),
+            Some(false),
+            "4th probe MUST be rejected — cap is 3"
+        );
+    }
+
+    #[test]
+    fn f05_probe_slot_released_on_success() {
+        // After a successful probe, the slot should be released and a
+        // subsequent caller admitted. Uses success_threshold=10 so a single
+        // success does NOT flip the circuit Closed.
+        let reg = make_halfopen(1, 10);
+
+        assert_eq!(reg.allow_request("svc").ok(), Some(true));
+        assert_eq!(reg.allow_request("svc").ok(), Some(false), "slot occupied");
+
+        reg.record_success("svc").ok();
+        assert_eq!(
+            reg.get_state("svc").ok(),
+            Some(CircuitState::HalfOpen),
+            "threshold not reached; still probing"
+        );
+        assert_eq!(
+            reg.allow_request("svc").ok(),
+            Some(true),
+            "slot released by record_success"
+        );
+    }
+
+    #[test]
+    fn f05_probe_accounting_cleared_on_failure_transition_to_open() {
+        // `record_failure` in HalfOpen transitions to Open. The in-flight
+        // counter must be cleared by `transition_to` so that the next
+        // open-timeout elapse admits a fresh probe.
+        let reg = make_halfopen(2, 5);
+
+        assert_eq!(reg.allow_request("svc").ok(), Some(true));
+        assert_eq!(reg.allow_request("svc").ok(), Some(true));
+        // Probe fails: HalfOpen -> Open, in_flight reset to 0.
+        reg.record_failure("svc").ok();
+        assert_eq!(reg.get_state("svc").ok(), Some(CircuitState::Open));
+
+        // Open timeout is Duration::ZERO so the next allow_request probes again.
+        assert_eq!(
+            reg.allow_request("svc").ok(),
+            Some(true),
+            "fresh probe after re-open"
+        );
+        assert_eq!(reg.get_state("svc").ok(), Some(CircuitState::HalfOpen));
+        // And the cap is restored in the new HalfOpen episode.
+        assert_eq!(reg.allow_request("svc").ok(), Some(true));
+        assert_eq!(
+            reg.allow_request("svc").ok(),
+            Some(false),
+            "cap=2 honoured in new probe window"
+        );
+    }
+
+    #[test]
+    fn f05_reset_clears_in_flight_probes() {
+        // Manual reset from HalfOpen must also zero the probe counter so a
+        // freshly-closed breaker has a clean slate.
+        let reg = make_halfopen(1, 10);
+        reg.allow_request("svc").ok();
+        assert_eq!(reg.allow_request("svc").ok(), Some(false));
+
+        reg.reset("svc").ok();
+        assert_eq!(reg.get_state("svc").ok(), Some(CircuitState::Closed));
+
+        // After reset, a future HalfOpen episode should admit probes normally.
+        reg.record_failure("svc").ok();
+        assert_eq!(reg.get_state("svc").ok(), Some(CircuitState::Open));
+        assert_eq!(reg.allow_request("svc").ok(), Some(true));
+        assert_eq!(
+            reg.allow_request("svc").ok(),
+            Some(false),
+            "cap=1 enforced cleanly post-reset"
+        );
+    }
+
+    #[test]
+    fn f05_zero_max_probes_rejects_all_probes() {
+        // Pathological config: `half_open_max_requests = 0`.
+        // Prior code admitted every caller; the fix must reject all — the
+        // breaker effectively stays closed-to-traffic until operator reset.
+        let reg = CircuitBreakerRegistry::new();
+        let config = CircuitBreakerConfig::builder()
+            .failure_threshold(1)
+            .success_threshold(1)
+            .open_timeout(Duration::ZERO)
+            .half_open_max_requests(0)
+            .build();
+        reg.register_breaker("svc", config).ok();
+        reg.record_failure("svc").ok();
+
+        // First allow_request transitions Open -> HalfOpen but cap=0 means
+        // this caller itself is rejected.
+        assert_eq!(reg.allow_request("svc").ok(), Some(false));
+        assert_eq!(reg.get_state("svc").ok(), Some(CircuitState::HalfOpen));
+    }
+
+    #[test]
+    fn f05_concurrent_callers_respect_cap() {
+        // Simulate concurrent callers hitting `allow_request` in parallel.
+        // With cap=2 across a burst of 8 callers, exactly 2 must be admitted
+        // and 6 rejected. Validates that the atomic-under-write-lock accounting
+        // holds under real thread contention.
+        use std::sync::Arc as StdArc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::thread;
+
+        let reg = StdArc::new(make_halfopen(2, 100));
+
+        let admitted = StdArc::new(AtomicU32::new(0));
+        let rejected = StdArc::new(AtomicU32::new(0));
+
+        let mut handles = Vec::with_capacity(8);
+        for _ in 0..8 {
+            let reg_clone = StdArc::clone(&reg);
+            let admitted_clone = StdArc::clone(&admitted);
+            let rejected_clone = StdArc::clone(&rejected);
+            handles.push(thread::spawn(move || {
+                match reg_clone.allow_request("svc") {
+                    Ok(true) => {
+                        admitted_clone.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(false) => {
+                        rejected_clone.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(_) => unreachable!("svc is registered"),
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap_or_else(|_| unreachable!("thread panic"));
+        }
+
+        assert_eq!(
+            admitted.load(Ordering::SeqCst),
+            2,
+            "exactly half_open_max_requests=2 probes admitted under contention"
+        );
+        assert_eq!(
+            rejected.load(Ordering::SeqCst),
+            6,
+            "remaining 6 callers rejected by the cap"
+        );
+    }
+
+    #[test]
+    fn f05_property_cap_never_exceeded_under_arbitrary_sequences() {
+        // Property test via proptest: for any sequence of (cap, burst_size)
+        // combinations, the number of admissions in a single HalfOpen window
+        // must be <= cap. Uses proptest's default config (256 cases).
+        use proptest::prelude::*;
+
+        proptest!(|(cap in 1u32..=16u32, burst in 0usize..=32usize)| {
+            let reg = make_halfopen(cap, 1000);
+            let mut admits = 0u32;
+            for _ in 0..burst {
+                if reg.allow_request("svc").unwrap_or(false) {
+                    admits = admits.saturating_add(1);
+                }
+            }
+            // Invariant: admissions in a single HalfOpen window <= cap.
+            prop_assert!(
+                admits <= cap,
+                "admitted {admits} probes, cap was {cap}"
+            );
+        });
     }
 }
