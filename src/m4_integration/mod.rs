@@ -50,7 +50,9 @@ pub use rest::{RestClient, RestResponse, HttpMethod, RequestRecord};
 pub use grpc::{GrpcClient, GrpcResponse, GrpcStatus, CallType};
 pub use websocket::{WebSocketClient, WsMessage, WsConnectionState, FrameType};
 pub use ipc::{IpcManager, IpcSocket, IpcMessageType, SocketState};
-pub use event_bus::{EventBus, EventRecord, Subscription, ChannelInfo};
+pub use event_bus::{
+    ChannelInfo, EventBus, EventCountSink, EventRecord, EventSubscriber, Subscription,
+};
 pub use bridge::{BridgeManager, ServiceBridge, BridgeStatus};
 pub use peer_bridge::{PeerBridgeManager, PeerHealthState, PeerConfig, MeshHealthSummary};
 pub use tool_registrar::{ToolRegistrar, RegistrationReport, ToolRegistrationStatus};

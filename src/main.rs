@@ -89,6 +89,14 @@ struct AppState {
     zero_correlation_streak: std::sync::atomic::AtomicU64,
     /// When `true`, the observer tick cycle skips `EventBus` publishing (NAM-R7).
     metabolic_paused: std::sync::atomic::AtomicBool,
+    /// F-02 (S099): Live callback subscriber proving `EventBus` push delivery.
+    ///
+    /// Tallies events delivered via `EventSubscriber::on_event` across all
+    /// default channels. Previously the `EventSubscriber` trait had zero
+    /// production consumers — every `publish()` iterated an empty callback
+    /// map. This sink converts the dead trait into live infrastructure and
+    /// is exposed via `/api/event-bus/callback-stats`.
+    event_count_sink: Arc<maintenance_engine_v2::m4_integration::EventCountSink>,
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +244,48 @@ fn run_server_attempt(
             Err(e)
         }
     }
+}
+
+/// F-02 (S099): Install the `EventCountSink` as a live `EventBus` callback
+/// subscriber across all default channels.
+///
+/// Prior to this wiring, the `EventSubscriber` trait and
+/// `EventBus::register_callback` had zero production consumers — every
+/// `publish()` iterated an empty callback map. This function provides the
+/// first real push-based consumer, proving the R21 callback path end-to-end.
+/// The returned `Arc<EventCountSink>` is stored in `AppState` so it can be
+/// exposed via `/api/eventbus/callback-stats`.
+fn register_event_count_sink(
+    engine: &Engine,
+) -> Arc<maintenance_engine_v2::m4_integration::EventCountSink> {
+    const SUBSCRIBER_ID: &str = "me-event-count-sink";
+    const DEFAULT_CHANNELS: [&str; 7] = [
+        "health",
+        "remediation",
+        "learning",
+        "consensus",
+        "integration",
+        "metrics",
+        "gc",
+    ];
+
+    let sink = Arc::new(maintenance_engine_v2::m4_integration::EventCountSink::new());
+
+    for channel in DEFAULT_CHANNELS {
+        if let Err(e) = engine.event_bus().subscribe(SUBSCRIBER_ID, channel, None) {
+            tracing::debug!(error = %e, channel, "event_count_sink subscribe failed");
+        }
+    }
+    engine.event_bus().register_callback(
+        SUBSCRIBER_ID,
+        Arc::clone(&sink) as Arc<dyn maintenance_engine_v2::m4_integration::EventSubscriber>,
+    );
+    tracing::info!(
+        channels = DEFAULT_CHANNELS.len(),
+        subscriber_id = SUBSCRIBER_ID,
+        "F-02: EventBus callback sink registered (first real EventSubscriber consumer)"
+    );
+    sink
 }
 
 /// Spawn background tasks: L7 observer tick, tool registration, peer polling,
@@ -2658,6 +2708,11 @@ async fn feed_synthex_heat_sources(
 
 /// Async server entrypoint. Binds to `0.0.0.0:{port}` and serves until
 /// `Ctrl+C` is received.
+///
+/// `too_many_lines`: server initialisation naturally touches many subsystems
+/// (DB open, engine bootstrap, callback sink registration, background task
+/// spawn, 60+ route wiring). Splitting further would obscure the setup flow.
+#[allow(clippy::too_many_lines)]
 async fn serve(port: u16) -> Result<()> {
     tracing::info!("Initialising Maintenance Engine v{VERSION}...");
 
@@ -2672,13 +2727,20 @@ async fn serve(port: u16) -> Result<()> {
         tracing::warn!("DatabaseManager not available -- persistence disabled");
     }
 
+    // F-02 (S099): Register the first real EventBus callback subscriber.
+    // The sink is Arc-shared between AppState (for /api/eventbus/callback-stats)
+    // and EventBus (as the dyn EventSubscriber callback target).
+    let engine = Engine::new();
+    let event_count_sink = register_event_count_sink(&engine);
+
     let state = Arc::new(AppState {
-        engine: Engine::new(),
+        engine,
         db,
         started_at: std::time::Instant::now(),
         port,
         zero_correlation_streak: std::sync::atomic::AtomicU64::new(0),
         metabolic_paused: std::sync::atomic::AtomicBool::new(false),
+        event_count_sink,
     });
 
     tracing::info!(
@@ -2718,6 +2780,10 @@ async fn serve(port: u16) -> Result<()> {
         .route("/api/peers", get(handle_peers))
         // Metabolic activation endpoints
         .route("/api/eventbus/stats", get(handle_eventbus_stats))
+        .route(
+            "/api/eventbus/callback-stats",
+            get(handle_eventbus_callback_stats),
+        )
         .route("/api/field", get(handle_field))
         .route("/api/metabolic/pause", post(handle_metabolic_pause))
         .route("/api/metabolic/resume", post(handle_metabolic_resume))
@@ -3512,6 +3578,34 @@ async fn handle_eventbus_stats(
         "total_channels": bus.channel_count(),
         "total_events": bus.total_events(),
         "channels": channels,
+    }))
+}
+
+/// `GET /api/eventbus/callback-stats` -- F-02 (S099): delivery counters from
+/// the `EventCountSink`, the first real `EventSubscriber` consumer.
+///
+/// Proves the callback delivery path (`EventBus::register_callback` ->
+/// `on_event`) is alive end-to-end. If this returns non-zero counts, the
+/// previously-dead R21 "active nervous system" infrastructure is wired.
+async fn handle_eventbus_callback_stats(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let per_channel: Vec<Value> = state
+        .event_count_sink
+        .snapshot()
+        .into_iter()
+        .map(|(channel, count)| {
+            json!({
+                "channel": channel,
+                "delivered": count,
+            })
+        })
+        .collect();
+
+    Json(json!({
+        "subscriber_id": "me-event-count-sink",
+        "total_delivered": state.event_count_sink.total(),
+        "per_channel": per_channel,
     }))
 }
 

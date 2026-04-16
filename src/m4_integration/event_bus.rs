@@ -444,6 +444,94 @@ impl Default for EventBus {
     }
 }
 
+// ============================================================================
+// EventCountSink
+// ============================================================================
+
+/// Minimal live [`EventSubscriber`] implementation that tallies delivered
+/// events per channel.
+///
+/// F-02 (S099): The `EventSubscriber` trait and [`EventBus::register_callback`]
+/// path had zero production callers — `publish()` iterated the (empty) callback
+/// map on every call. This sink is the first real consumer of the callback
+/// path, proving end-to-end delivery without the scope-creep of an HTTP push
+/// bridge to V3. Uses atomics so `on_event` is lock-free and comfortably
+/// inside the documented "< 1ms" contract.
+///
+/// Consumers read the counters via [`EventCountSink::snapshot`] or
+/// [`EventCountSink::total`] for observability endpoints.
+#[derive(Debug, Default)]
+pub struct EventCountSink {
+    /// Per-channel event counters (atomic for lock-free increment).
+    counts: RwLock<HashMap<String, std::sync::atomic::AtomicU64>>,
+    /// Monotonic total counter (avoids summing the map on hot reads).
+    total: std::sync::atomic::AtomicU64,
+}
+
+impl EventCountSink {
+    /// Create a new empty sink.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            counts: RwLock::new(HashMap::new()),
+            total: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// Snapshot of per-channel counts.
+    ///
+    /// Returns owned `Vec<(channel, count)>` for API stability (C7).
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<(String, u64)> {
+        self.counts
+            .read()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.load(std::sync::atomic::Ordering::Relaxed)))
+            .collect()
+    }
+
+    /// Total events delivered across all channels.
+    #[must_use]
+    pub fn total(&self) -> u64 {
+        self.total.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Count for a specific channel (0 if never seen).
+    #[must_use]
+    pub fn channel_count(&self, channel: &str) -> u64 {
+        self.counts
+            .read()
+            .get(channel)
+            .map_or(0, |v| v.load(std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+impl EventSubscriber for EventCountSink {
+    fn on_event(&self, event: &EventRecord) {
+        // Fast path: channel already known — just bump its atomic.
+        {
+            let guard = self.counts.read();
+            if let Some(counter) = guard.get(&event.channel) {
+                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.total
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+        }
+        // Slow path: first event on this channel — insert the counter.
+        // `entry().or_insert_with()` returns `&mut AtomicU64` valid for the
+        // brief lock hold; `fetch_add` takes `&self` so the mutable borrow
+        // is implicit and the lock is released at end of statement.
+        self.counts
+            .write()
+            .entry(event.channel.clone())
+            .or_insert_with(|| std::sync::atomic::AtomicU64::new(0))
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.total
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1096,5 +1184,127 @@ mod tests {
         let bus = EventBus::new();
         // "health" already exists as default
         assert!(bus.create_channel("health").is_err());
+    }
+
+    // ========================================================================
+    // F-02 (S099): EventCountSink — first real EventSubscriber consumer
+    // ========================================================================
+
+    #[test]
+    fn f02_count_sink_starts_empty() {
+        let sink = EventCountSink::new();
+        assert_eq!(sink.total(), 0);
+        assert!(sink.snapshot().is_empty());
+        assert_eq!(sink.channel_count("health"), 0);
+    }
+
+    #[test]
+    fn f02_count_sink_counts_delivered_events() {
+        // End-to-end wiring: EventBus -> register_callback -> publish ->
+        // EventSubscriber::on_event -> atomic counter.
+        use std::sync::Arc;
+
+        let bus = EventBus::new();
+        let sink = Arc::new(EventCountSink::new());
+
+        // Must subscribe (for delivery filter) AND register_callback (for push).
+        bus.subscribe("count-sink", "health", None)
+            .unwrap_or_else(|_| unreachable!());
+        bus.subscribe("count-sink", "metrics", None)
+            .unwrap_or_else(|_| unreachable!());
+        bus.register_callback("count-sink", Arc::clone(&sink) as Arc<dyn EventSubscriber>);
+
+        let _ = bus.publish("health", "ping", "{}", "src");
+        let _ = bus.publish("health", "ping", "{}", "src");
+        let _ = bus.publish("metrics", "tick", "{}", "src");
+
+        assert_eq!(sink.total(), 3);
+        assert_eq!(sink.channel_count("health"), 2);
+        assert_eq!(sink.channel_count("metrics"), 1);
+        assert_eq!(sink.channel_count("learning"), 0);
+    }
+
+    #[test]
+    fn f02_count_sink_ignores_events_without_subscription() {
+        // If the callback is registered but the subscriber is NOT subscribed
+        // to the channel, `delivered_to` is empty and on_event is never called.
+        use std::sync::Arc;
+
+        let bus = EventBus::new();
+        let sink = Arc::new(EventCountSink::new());
+        bus.register_callback("count-sink", Arc::clone(&sink) as Arc<dyn EventSubscriber>);
+
+        // No `bus.subscribe(...)` — the sink will not appear in delivered_to.
+        let _ = bus.publish("health", "ping", "{}", "src");
+        assert_eq!(sink.total(), 0);
+    }
+
+    #[test]
+    fn f02_count_sink_respects_filter() {
+        // Filter delivers only matching event types to on_event.
+        use std::sync::Arc;
+
+        let bus = EventBus::new();
+        let sink = Arc::new(EventCountSink::new());
+        bus.subscribe("count-sink", "health", Some("critical".into()))
+            .unwrap_or_else(|_| unreachable!());
+        bus.register_callback("count-sink", Arc::clone(&sink) as Arc<dyn EventSubscriber>);
+
+        let _ = bus.publish("health", "critical", "{}", "src");
+        let _ = bus.publish("health", "info", "{}", "src"); // filtered out
+        let _ = bus.publish("health", "critical", "{}", "src");
+
+        assert_eq!(sink.total(), 2);
+        assert_eq!(sink.channel_count("health"), 2);
+    }
+
+    #[test]
+    fn f02_count_sink_snapshot_is_consistent() {
+        use std::sync::Arc;
+
+        let bus = EventBus::new();
+        let sink = Arc::new(EventCountSink::new());
+        bus.subscribe("count-sink", "health", None)
+            .unwrap_or_else(|_| unreachable!());
+        bus.register_callback("count-sink", Arc::clone(&sink) as Arc<dyn EventSubscriber>);
+
+        for _ in 0..5 {
+            let _ = bus.publish("health", "ping", "{}", "src");
+        }
+
+        let snap = sink.snapshot();
+        let sum: u64 = snap.iter().map(|(_, c)| c).sum();
+        assert_eq!(sum, sink.total());
+        assert_eq!(sum, 5);
+    }
+
+    #[test]
+    fn f02_count_sink_on_event_is_fast_under_contention() {
+        // Spawn multiple publishers against a single sink; verify no deadlock
+        // and counts sum correctly (on_event is atomic, lock-free on hot path).
+        use std::sync::Arc;
+        use std::thread;
+
+        let bus = Arc::new(EventBus::new());
+        let sink = Arc::new(EventCountSink::new());
+        bus.subscribe("count-sink", "metrics", None)
+            .unwrap_or_else(|_| unreachable!());
+        bus.register_callback("count-sink", Arc::clone(&sink) as Arc<dyn EventSubscriber>);
+
+        let mut handles = Vec::with_capacity(4);
+        for _ in 0..4 {
+            let b = Arc::clone(&bus);
+            handles.push(thread::spawn(move || {
+                for _ in 0..100 {
+                    let _ = b.publish("metrics", "tick", "{}", "src");
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap_or_else(|_| unreachable!("publisher panic"));
+        }
+
+        assert_eq!(sink.total(), 400);
+        assert_eq!(sink.channel_count("metrics"), 400);
     }
 }
