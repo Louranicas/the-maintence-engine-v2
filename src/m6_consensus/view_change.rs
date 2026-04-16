@@ -26,8 +26,9 @@
 //! - [Module Specification](../../ai_docs/modules/M34_VIEW_CHANGE_HANDLER.md)
 //! - [PBFT Consensus](../../nam/PBFT_CONSENSUS.md)
 
-use std::sync::RwLock;
 use std::time::SystemTime;
+
+use parking_lot::RwLock;
 
 use crate::{Error, Result};
 
@@ -189,22 +190,18 @@ impl ViewChangeHandler {
     /// Get the current view number.
     #[must_use]
     pub fn current_view(&self) -> u64 {
-        self.current_view
-            .read()
-            .map_or(0, |guard| guard.view_number)
+        self.current_view.read().view_number
     }
 
     /// Get the ID of the current primary (leader).
     ///
     /// # Errors
     ///
-    /// Returns `Error::Other` if the lock is poisoned.
+    /// Never returns an error. The `Result` return type is retained for
+    /// API stability; `parking_lot::RwLock` does not poison, so the
+    /// previous poison-error path is unreachable.
     pub fn current_primary(&self) -> Result<String> {
-        let guard = self
-            .current_view
-            .read()
-            .map_err(|_| Error::Other("Lock poisoned".into()))?;
-        Ok(guard.primary_id.clone())
+        Ok(self.current_view.read().primary_id.clone())
     }
 
     /// Deterministic primary selection for a given view number.
@@ -228,8 +225,8 @@ impl ViewChangeHandler {
     ///
     /// # Errors
     ///
-    /// Returns `Error::Validation` if the requester is empty.
-    /// Returns `Error::Other` if a lock is poisoned.
+    /// Returns `Error::Validation` if the requester is empty. Lock-poison
+    /// errors are no longer possible under `parking_lot::RwLock`.
     pub fn request_view_change(
         &self,
         reason: ViewChangeReason,
@@ -239,10 +236,7 @@ impl ViewChangeHandler {
             return Err(Error::Validation("Requester cannot be empty".into()));
         }
 
-        let mut view_guard = self
-            .current_view
-            .write()
-            .map_err(|_| Error::Other("Lock poisoned".into()))?;
+        let mut view_guard = self.current_view.write();
 
         let from_view = view_guard.view_number;
         let to_view = from_view + 1;
@@ -265,10 +259,7 @@ impl ViewChangeHandler {
 
         drop(view_guard);
 
-        let mut pending = self
-            .pending_requests
-            .write()
-            .map_err(|_| Error::Other("Lock poisoned".into()))?;
+        let mut pending = self.pending_requests.write();
         if pending.len() >= MAX_PENDING_REQUESTS {
             pending.remove(0);
         }
@@ -288,13 +279,11 @@ impl ViewChangeHandler {
     ///
     /// Returns `Error::Validation` if no view change is in progress
     /// (state must be `Requested`, `Collecting`, or `Executing`).
-    /// Returns `Error::Other` if a lock is poisoned.
+    /// Lock-poison errors are no longer possible under
+    /// `parking_lot::RwLock`.
     #[allow(clippy::cast_possible_truncation)]
     pub fn execute_view_change(&self) -> Result<ViewChangeRecord> {
-        let mut view_guard = self
-            .current_view
-            .write()
-            .map_err(|_| Error::Other("Lock poisoned".into()))?;
+        let mut view_guard = self.current_view.write();
 
         // Must be in a changeable state
         match view_guard.state {
@@ -316,10 +305,7 @@ impl ViewChangeHandler {
 
         // Determine the reason from the first pending request
         let reason = {
-            let pending = self
-                .pending_requests
-                .read()
-                .map_err(|_| Error::Other("Lock poisoned".into()))?;
+            let pending = self.pending_requests.read();
             pending
                 .first()
                 .map_or(ViewChangeReason::ManualTrigger, |r| r.reason.clone())
@@ -363,10 +349,7 @@ impl ViewChangeHandler {
 
         // Store in history
         {
-            let mut history = self
-                .view_history
-                .write()
-                .map_err(|_| Error::Other("Lock poisoned".into()))?;
+            let mut history = self.view_history.write();
             if history.len() >= MAX_VIEW_HISTORY {
                 history.remove(0);
             }
@@ -375,10 +358,7 @@ impl ViewChangeHandler {
 
         // Clear pending requests
         {
-            let mut pending = self
-                .pending_requests
-                .write()
-                .map_err(|_| Error::Other("Lock poisoned".into()))?;
+            let mut pending = self.pending_requests.write();
             pending.clear();
         }
 
@@ -393,13 +373,11 @@ impl ViewChangeHandler {
     /// # Errors
     ///
     /// Returns `Error::Validation` if no view change is in progress.
-    /// Returns `Error::Other` if a lock is poisoned.
+    /// Lock-poison errors are no longer possible under
+    /// `parking_lot::RwLock`.
     #[allow(clippy::cast_possible_truncation)]
     pub fn cancel_view_change(&self) -> Result<()> {
-        let mut view_guard = self
-            .current_view
-            .write()
-            .map_err(|_| Error::Other("Lock poisoned".into()))?;
+        let mut view_guard = self.current_view.write();
 
         match view_guard.state {
             ViewChangeState::Requested
@@ -439,10 +417,7 @@ impl ViewChangeHandler {
         drop(view_guard);
 
         {
-            let mut history = self
-                .view_history
-                .write()
-                .map_err(|_| Error::Other("Lock poisoned".into()))?;
+            let mut history = self.view_history.write();
             if history.len() >= MAX_VIEW_HISTORY {
                 history.remove(0);
             }
@@ -451,10 +426,7 @@ impl ViewChangeHandler {
 
         // Clear pending requests
         {
-            let mut pending = self
-                .pending_requests
-                .write()
-                .map_err(|_| Error::Other("Lock poisoned".into()))?;
+            let mut pending = self.pending_requests.write();
             pending.clear();
         }
 
@@ -465,35 +437,28 @@ impl ViewChangeHandler {
     ///
     /// # Errors
     ///
-    /// Returns `Error::Other` if the lock is poisoned.
+    /// Never returns an error. The `Result` return type is retained for
+    /// API stability; `parking_lot::RwLock` does not poison.
     pub fn view_state(&self) -> Result<ViewState> {
-        let guard = self
-            .current_view
-            .read()
-            .map_err(|_| Error::Other("Lock poisoned".into()))?;
-        Ok(guard.clone())
+        Ok(self.current_view.read().clone())
     }
 
     /// Get the number of pending view change requests.
     #[must_use]
     pub fn pending_request_count(&self) -> usize {
-        self.pending_requests.read().map_or(0, |g| g.len())
+        self.pending_requests.read().len()
     }
 
     /// Get a clone of the view change history.
     #[must_use]
     pub fn view_history(&self) -> Vec<ViewChangeRecord> {
-        self.view_history
-            .read()
-            .map_or_else(|_| Vec::new(), |g| g.clone())
+        self.view_history.read().clone()
     }
 
     /// Get the total number of view changes that have been performed.
     #[must_use]
     pub fn change_count(&self) -> u64 {
-        self.current_view
-            .read()
-            .map_or(0, |guard| guard.change_count)
+        self.current_view.read().change_count
     }
 
     /// Calculate the timeout for a given consensus action.
@@ -514,7 +479,7 @@ impl ViewChangeHandler {
             ConsensusAction::CascadeRestart => BASE_TIMEOUT_CASCADE_RESTART_MS,
             ConsensusAction::ConfigRollback => BASE_TIMEOUT_CONFIG_ROLLBACK_MS,
         };
-        let multiplier = self.timeout_multiplier.read().map_or(1.0, |g| *g);
+        let multiplier = *self.timeout_multiplier.read();
         let result = (base as f64) * multiplier;
         // Clamp to valid u64 range
         if result <= 0.0 {
@@ -531,40 +496,33 @@ impl ViewChangeHandler {
     /// # Errors
     ///
     /// Returns `Error::Validation` if the multiplier is not positive or is non-finite.
-    /// Returns `Error::Other` if the lock is poisoned.
+    /// Lock-poison errors are no longer possible under
+    /// `parking_lot::RwLock`.
     pub fn set_timeout_multiplier(&self, multiplier: f64) -> Result<()> {
         if multiplier <= 0.0 || !multiplier.is_finite() {
             return Err(Error::Validation(format!(
                 "Timeout multiplier must be positive and finite, got: {multiplier}"
             )));
         }
-        {
-            let mut guard = self
-                .timeout_multiplier
-                .write()
-                .map_err(|_| Error::Other("Lock poisoned".into()))?;
-            *guard = multiplier;
-        }
+        *self.timeout_multiplier.write() = multiplier;
         Ok(())
     }
 
     /// Get the current timeout multiplier.
     #[must_use]
     pub fn timeout_multiplier(&self) -> f64 {
-        self.timeout_multiplier.read().map_or(1.0, |g| *g)
+        *self.timeout_multiplier.read()
     }
 
     /// Check whether a view change is currently in progress.
     #[must_use]
     pub fn is_view_change_in_progress(&self) -> bool {
-        self.current_view.read().is_ok_and(|guard| {
-            matches!(
-                guard.state,
-                ViewChangeState::Requested
-                    | ViewChangeState::Collecting
-                    | ViewChangeState::Executing
-            )
-        })
+        matches!(
+            self.current_view.read().state,
+            ViewChangeState::Requested
+                | ViewChangeState::Collecting
+                | ViewChangeState::Executing
+        )
     }
 
     /// Calculate the success rate of view changes from history.
@@ -573,10 +531,7 @@ impl ViewChangeHandler {
     #[must_use]
     #[allow(clippy::cast_precision_loss)]
     pub fn success_rate(&self) -> f64 {
-        let history = self
-            .view_history
-            .read()
-            .map_or_else(|_| Vec::new(), |g| g.clone());
+        let history = self.view_history.read();
         if history.is_empty() {
             return 0.0;
         }
@@ -591,10 +546,7 @@ impl ViewChangeHandler {
     #[must_use]
     #[allow(clippy::cast_precision_loss)]
     pub fn average_duration_ms(&self) -> f64 {
-        let history = self
-            .view_history
-            .read()
-            .map_or_else(|_| Vec::new(), |g| g.clone());
+        let history = self.view_history.read();
         if history.is_empty() {
             return 0.0;
         }
@@ -1108,4 +1060,151 @@ mod tests {
         assert!(state.completed_at.is_some());
     }
 
+    // ---------------------------------------------------------------
+    // F-06: parking_lot::RwLock migration — poisoning-resistance tests
+    //
+    // Regression guard for Session 099 bug-hunt finding F-06:
+    // Prior to the fix, view_change.rs used std::sync::RwLock and read
+    // accessors swallowed PoisonError via .map_or(default). A single
+    // panic while holding a write lock would permanently corrupt the
+    // PBFT audit trail — `pending_request_count` would return 0 forever,
+    // `view_history` would return empty, `success_rate` would return 0.0.
+    //
+    // parking_lot::RwLock does not implement lock poisoning, so a panic
+    // holding the write lock releases the lock cleanly on unwind and
+    // subsequent readers observe the state as it was at panic time.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn f06_reads_survive_writer_panic() {
+        // Seed history with one completed view change so readers have data
+        // to return. Then spawn a thread that grabs the write guard and
+        // panics; parking_lot releases the lock on unwind (no poisoning).
+        use std::sync::Arc;
+        use std::thread;
+
+        let handler = Arc::new(ViewChangeHandler::new(default_fleet()));
+        let _ = handler.request_view_change(ViewChangeReason::ProposalTimeout, "agent-01");
+        let _ = handler.execute_view_change();
+        assert_eq!(handler.view_history().len(), 1);
+        assert!((handler.success_rate() - 1.0).abs() < f64::EPSILON);
+
+        // Spawn a thread that panics mid-write. Catch the panic so the
+        // test process survives; the lock is released on unwind.
+        let panicker = {
+            let h = Arc::clone(&handler);
+            thread::spawn(move || {
+                // This grabs the write lock, simulates mutation work,
+                // then panics. With std::sync::RwLock this would poison
+                // the lock; with parking_lot it releases cleanly.
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut guard = h.current_view.write();
+                    guard.change_count += 100; // partial mutation visible post-panic
+                    panic!("simulated writer panic");
+                }));
+                assert!(result.is_err(), "expected inner panic");
+            })
+        };
+        panicker
+            .join()
+            .unwrap_or_else(|_| unreachable!("outer thread should not panic"));
+
+        // Readers must still work AND observe the partial mutation from the
+        // panicking writer (parking_lot does not roll back, it just releases).
+        // This asserts the PBFT audit history survives a writer panic.
+        assert_eq!(handler.view_history().len(), 1, "history preserved");
+        assert!(
+            (handler.success_rate() - 1.0).abs() < f64::EPSILON,
+            "success_rate still accurate post-panic"
+        );
+        assert_eq!(
+            handler.pending_request_count(),
+            0,
+            "pending count accurate post-panic"
+        );
+        // change_count reflects both the legitimate execute_view_change (+1)
+        // and the panicking writer's partial mutation (+100).
+        assert_eq!(handler.change_count(), 101, "partial write observable");
+        // Subsequent writes continue to work — lock is not poisoned.
+        assert!(
+            handler
+                .request_view_change(ViewChangeReason::QuorumFailure, "agent-02")
+                .is_ok(),
+            "writes succeed after poison-free recovery"
+        );
+    }
+
+    #[test]
+    fn f06_concurrent_readers_during_writer_panic_do_not_deadlock() {
+        // Ensure that a panicking writer does not leave the lock in a state
+        // that blocks concurrent readers. Spawns 4 reader threads and 1
+        // panicking writer; all reads complete successfully.
+        use std::sync::Arc;
+        use std::thread;
+        use std::time::Duration;
+
+        let handler = Arc::new(ViewChangeHandler::new(default_fleet()));
+
+        let mut reader_handles = Vec::with_capacity(4);
+        for _ in 0..4 {
+            let h = Arc::clone(&handler);
+            reader_handles.push(thread::spawn(move || {
+                // Spin on reads for a short window.
+                let start = std::time::Instant::now();
+                let mut reads = 0u32;
+                while start.elapsed() < Duration::from_millis(50) {
+                    let _ = h.pending_request_count();
+                    let _ = h.view_history();
+                    let _ = h.success_rate();
+                    let _ = h.current_view();
+                    reads += 1;
+                }
+                reads
+            }));
+        }
+
+        // Writer that panics mid-way.
+        let writer = {
+            let h = Arc::clone(&handler);
+            thread::spawn(move || {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _guard = h.current_view.write();
+                    // Short hold then panic.
+                    std::thread::sleep(Duration::from_millis(5));
+                    panic!("mid-write panic");
+                }));
+            })
+        };
+
+        writer.join().unwrap_or_else(|_| unreachable!());
+        for h in reader_handles {
+            let reads = h.join().unwrap_or_else(|_| unreachable!());
+            assert!(reads > 0, "reader made progress despite writer panic");
+        }
+
+        // Lock is still usable.
+        assert_eq!(handler.current_view(), 0);
+    }
+
+    #[test]
+    fn f06_parking_lot_does_not_poison_on_simple_panic() {
+        // Minimal regression guard: a single in-thread panic inside a
+        // write-lock scope does NOT poison the lock, and subsequent writes
+        // see the pre-panic state plus any partial mutation.
+        let handler = ViewChangeHandler::new(default_fleet());
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut guard = handler.current_view.write();
+            guard.change_count = 42;
+            panic!("oops");
+        }));
+        assert!(result.is_err(), "inner panic caught");
+
+        // Lock is released (parking_lot), and change_count reflects the
+        // write that occurred before the panic.
+        assert_eq!(handler.change_count(), 42);
+        // New writes proceed normally.
+        let _ = handler.request_view_change(ViewChangeReason::ProposalTimeout, "agent-01");
+        assert_eq!(handler.pending_request_count(), 1);
+    }
 }
