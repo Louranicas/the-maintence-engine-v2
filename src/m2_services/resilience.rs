@@ -418,6 +418,61 @@ pub struct CircuitBreakerStats {
 }
 
 // ============================================================================
+// ProbePermit (ME-001 F-05 regression fix: RAII guard for half_open probe slot)
+// ============================================================================
+
+/// RAII guard returned by [`CircuitBreakerRegistry::allow_probe`].
+///
+/// Dropping the permit without calling [`Self::record_success`] or
+/// [`Self::record_failure`] automatically releases the `in_flight_probes` slot,
+/// preventing permanent `HalfOpen` lockout when a caller panics between the
+/// admission check and the outcome record.
+///
+/// ME-001 regression fix: the S099 F-05 implementation tracked the probe counter
+/// but assumed callers always reach `record_success`/`record_failure`. A panic
+/// in caller code leaked the slot; enough leaks and `HalfOpen` denied all traffic.
+pub struct ProbePermit<'a> {
+    registry: &'a CircuitBreakerRegistry,
+    service_id: String,
+    consumed: bool,
+}
+
+impl ProbePermit<'_> {
+    /// Consume the permit and delegate to `record_success`.
+    ///
+    /// # Errors
+    /// Returns `Error::ServiceNotFound` if the breaker was deregistered mid-probe.
+    pub fn record_success(mut self) -> Result<CircuitState> {
+        self.consumed = true;
+        self.registry.record_success(&self.service_id)
+    }
+
+    /// Consume the permit and delegate to `record_failure`.
+    ///
+    /// # Errors
+    /// Returns `Error::ServiceNotFound` if the breaker was deregistered mid-probe.
+    pub fn record_failure(mut self) -> Result<CircuitState> {
+        self.consumed = true;
+        self.registry.record_failure(&self.service_id)
+    }
+}
+
+impl Drop for ProbePermit<'_> {
+    fn drop(&mut self) {
+        if self.consumed {
+            return;
+        }
+        // Permit leaked (caller panic / early return). Release the slot so the
+        // HalfOpen probe quota isn't exhausted by dead permits.
+        // `saturating_sub` prevents underflow if a concurrent `transition_to`
+        // already reset the counter.
+        if let Some(entry) = self.registry.breakers.write().get_mut(&self.service_id) {
+            entry.in_flight_probes = entry.in_flight_probes.saturating_sub(1);
+        }
+    }
+}
+
+// ============================================================================
 // CircuitBreakerRegistry
 // ============================================================================
 
@@ -766,6 +821,40 @@ impl CircuitBreakerOps for CircuitBreakerRegistry {
 
     fn is_registered(&self, service_id: &str) -> bool {
         self.breakers.read().contains_key(service_id)
+    }
+}
+
+// ============================================================================
+// ME-001 F-05 regression fix: RAII probe-slot variant of `allow_request`
+// ============================================================================
+
+impl CircuitBreakerRegistry {
+    /// Probe-slot RAII variant of [`CircuitBreakerOps::allow_request`].
+    ///
+    /// Returns `Ok(Some(permit))` when a `HalfOpen` probe slot is admitted; the
+    /// permit's [`ProbePermit::record_success`]/`record_failure` consume it
+    /// and record the outcome, while its `Drop` releases the slot if the
+    /// caller panics or returns early without calling either. Returns
+    /// `Ok(None)` when denied.
+    ///
+    /// Use this over `allow_request` for any code path where the outcome-
+    /// record might be skipped by unwinding. `allow_request` remains valid
+    /// when the caller can guarantee outcome-record is always reached.
+    ///
+    /// # Errors
+    /// Returns `Error::ServiceNotFound` if no breaker is registered for
+    /// `service_id`.
+    pub fn allow_probe<'a>(&'a self, service_id: &str) -> Result<Option<ProbePermit<'a>>> {
+        let allowed = <Self as CircuitBreakerOps>::allow_request(self, service_id)?;
+        if allowed {
+            Ok(Some(ProbePermit {
+                registry: self,
+                service_id: service_id.to_owned(),
+                consumed: false,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -2483,5 +2572,77 @@ mod tests {
                 "admitted {admits} probes, cap was {cap}"
             );
         });
+    }
+
+    // ── ME-001 regression tests: ProbePermit RAII slot release ──
+
+    /// Reads `in_flight_probes` through the read guard. Used only by tests.
+    fn in_flight(reg: &CircuitBreakerRegistry, id: &str) -> u32 {
+        reg.breakers
+            .read()
+            .get(id)
+            .map_or(0, |e| e.in_flight_probes)
+    }
+
+    #[test]
+    fn me001_probe_permit_drop_without_record_releases_slot() {
+        let reg = CircuitBreakerRegistry::new();
+        let config = CircuitBreakerConfig::builder()
+            .failure_threshold(1)
+            .open_timeout(Duration::ZERO)
+            .half_open_max_requests(2)
+            .build();
+        reg.register_breaker("svc", config).ok();
+        // Drive Closed -> Open -> HalfOpen (first probe consumed by transition).
+        reg.record_failure("svc").ok();
+        let permit = reg
+            .allow_probe("svc")
+            .expect("allow_probe should not error")
+            .expect("first probe should be admitted");
+        assert_eq!(in_flight(&reg, "svc"), 1);
+        drop(permit);
+        assert_eq!(in_flight(&reg, "svc"), 0);
+    }
+
+    #[test]
+    fn me001_probe_permit_consumed_by_record_success_no_double_decrement() {
+        let reg = CircuitBreakerRegistry::new();
+        let config = CircuitBreakerConfig::builder()
+            .failure_threshold(1)
+            .success_threshold(3)
+            .open_timeout(Duration::ZERO)
+            .half_open_max_requests(2)
+            .build();
+        reg.register_breaker("svc", config).ok();
+        reg.record_failure("svc").ok();
+        let permit = reg.allow_probe("svc").unwrap_or(None).expect("admitted");
+        assert_eq!(in_flight(&reg, "svc"), 1);
+        // record_success consumes the permit; Drop fires after but skips.
+        permit.record_success().ok();
+        assert_eq!(in_flight(&reg, "svc"), 0);
+    }
+
+    #[test]
+    fn me001_probe_permit_panic_releases_slot() {
+        use std::sync::Arc;
+        let reg = Arc::new(CircuitBreakerRegistry::new());
+        let config = CircuitBreakerConfig::builder()
+            .failure_threshold(1)
+            .open_timeout(Duration::ZERO)
+            .half_open_max_requests(2)
+            .build();
+        reg.register_breaker("svc", config).ok();
+        reg.record_failure("svc").ok();
+        let reg2 = Arc::clone(&reg);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _permit = reg2
+                .allow_probe("svc")
+                .expect("allow_probe")
+                .expect("first probe admitted");
+            panic!("simulated caller panic mid-probe");
+        }));
+        assert!(outcome.is_err(), "panic should propagate out of catch_unwind");
+        // The permit's Drop must have released the slot despite the panic.
+        assert_eq!(in_flight(&reg, "svc"), 0);
     }
 }
